@@ -1,0 +1,66 @@
+{
+  "run_id": "m5t9-2026-06-15",
+  "run_at": "2026-06-16T03:11:59.885991+00:00",
+  "is_sandbox": true,
+  "weights_v10": {
+    "options": 30,
+    "short": 35,
+    "divergence": 20,
+    "insider": 15
+  },
+  "weights_candidate_A": {
+    "options": 25,
+    "short": 40,
+    "divergence": 20,
+    "insider": 15
+  },
+  "metrics_v10": {
+    "weights": {
+      "options": 30,
+      "short": 35,
+      "divergence": 20,
+      "insider": 15
+    },
+    "n_events_total": 31,
+    "n_by_type": {
+      "short_squeeze": 8,
+      "earnings_crash": 12,
+      "institutional_slaughter": 11
+    },
+    "hits": 0,
+    "false_positives": 0,
+    "misses": 0,
+    "precision": null,
+    "recall": null,
+    "f1": null,
+    "reason": "sandbox no PG/EOD reachable,设 HR_BACKTEST_LIVE=1 + 真数据后重跑"
+  },
+  "metrics_candidate_A": {
+    "weights": {
+      "options": 25,
+      "short": 40,
+      "divergence": 20,
+      "insider": 15
+    },
+    "n_events_total": 31,
+    "n_by_type": {
+      "short_squeeze": 8,
+      "earnings_crash": 12,
+      "institutional_slaughter": 11
+    },
+    "hits": 0,
+    "false_positives": 0,
+    "misses": 0,
+    "precision": null,
+    "recall": null,
+    "f1": null,
+    "reason": "sandbox no PG/EOD reachable,设 HR_BACKTEST_LIVE=1 + 真数据后重跑"
+  },
+  "diff": {
+    "delta_hits": 0,
+    "delta_fp": 0,
+    "recommendation": "sandbox 模式下无证据推荐任何权重调整;沿用 v1.0 静态值直到生产环境 HR_BACKTEST_LIVE=1 跑出真实 F1。"
+  },
+  "sandbox_reason": "无 PG / 真实 EOD 可达,本 run 是空跑 sanity check;生产需 HR_BACKTEST_LIVE=1 + 灌库 BD-085 + 配齐 BD-089 三源快照后,用 uv run 跑出真实命中/误报率。",
+  "next_step": "M6 切真实 EOD 后,重跑本脚本并更新 BD-087 校准报告 v3.0(出最终推荐权重)。"
+}

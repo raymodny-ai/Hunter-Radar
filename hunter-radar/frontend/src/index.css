@@ -1,0 +1,24 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  color-scheme: dark;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  font-feature-settings: "tnum";
+  -webkit-font-smoothing: antialiased;
+}
+
+/* 信号灯发光效果 */
+.signal-red    { box-shadow: 0 0 12px 0 rgba(220, 38, 38, 0.6); }
+.signal-yellow { box-shadow: 0 0 12px 0 rgba(245, 158, 11, 0.5); }
+.signal-gray   { box-shadow: 0 0 8px 0  rgba(148, 163, 184, 0.3); }
+.signal-green  { box-shadow: 0 0 12px 0 rgba(16, 185, 129, 0.5); }

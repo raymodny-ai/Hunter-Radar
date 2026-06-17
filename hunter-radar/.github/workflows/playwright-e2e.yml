@@ -1,0 +1,78 @@
+# FE-067 Playwright E2E 骨架(smoke / 路由可达 / 关键 API mock)
+#
+# 沙箱不实跑,生产环境 push / PR 时触发。
+# 关键 smoke 路径:
+#   1. / 首页可达 + 含 "🎯 Hunter Radar" + RegimeBanner 存在
+#   2. /screener 可达 + 含搜索框
+#   3. /basket 可达 + 空态有"创建自选篮"按钮
+#   4. /alerts 可达 + 含"创建预警规则"按钮
+#   5. /api/v1/regime 返回 200
+#   6. /api/v1/data-status 返回 200
+#   7. /api/v1/auth/quota 返回 200(沙箱无 JWT 也返 200,占位 UUID)
+
+name: FE-067 Playwright E2E
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  e2e:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: "pnpm"
+          cache-dependency-path: frontend/pnpm-lock.yaml
+
+      - name: Install pnpm
+        run: npm i -g pnpm@9
+
+      - name: Install deps
+        working-directory: frontend
+        run: pnpm install --frozen-lockfile
+
+      - name: Install Playwright browsers
+        working-directory: frontend
+        run: pnpm exec playwright install --with-deps chromium
+
+      - name: Start backend
+        working-directory: backend
+        run: |
+          uv run fastapi dev app/main.py --port 8000 &
+          for i in $(seq 1 30); do
+            curl -s http://localhost:8000/health >/dev/null && break
+            sleep 1
+          done
+
+      - name: Start frontend
+        working-directory: frontend
+        run: |
+          pnpm dev --port 5173 &
+          for i in $(seq 1 30); do
+            curl -s http://localhost:5173 >/dev/null && break
+            sleep 1
+          done
+
+      - name: Run Playwright tests
+        working-directory: frontend
+        run: pnpm exec playwright test tests/e2e/ --reporter=line,json
+        env:
+          BASE_URL: http://localhost:5173
+          API_URL: http://localhost:8000
+
+      - name: Upload Playwright report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report
+          path: frontend/playwright-report/
+          retention-days: 7

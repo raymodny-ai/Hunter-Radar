@@ -1,0 +1,82 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="theme-color" content="#0f172a" />
+    <title>Hunter Radar — 离线模式</title>
+    <style>
+      :root { color-scheme: dark; }
+      body {
+        margin: 0;
+        min-height: 100vh;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui,
+          "PingFang SC", "Microsoft YaHei", sans-serif;
+        background: #0f172a;
+        color: #e2e8f0;
+        padding: 24px;
+        box-sizing: border-box;
+      }
+      .card {
+        max-width: 480px;
+        background: #1e293b;
+        border: 1px solid #334155;
+        border-radius: 12px;
+        padding: 32px;
+        text-align: center;
+      }
+      h1 { font-size: 20px; margin: 0 0 8px; color: #f8fafc; }
+      .badge {
+        display: inline-block;
+        background: #f59e0b22;
+        color: #fbbf24;
+        border: 1px solid #f59e0b55;
+        border-radius: 6px;
+        padding: 4px 10px;
+        font-size: 12px;
+        font-weight: 600;
+        margin-bottom: 16px;
+      }
+      p { font-size: 14px; line-height: 1.6; color: #cbd5e1; margin: 8px 0; }
+      .hint { color: #94a3b8; font-size: 12px; margin-top: 16px; }
+      button {
+        margin-top: 20px;
+        padding: 10px 20px;
+        background: #0ea5e9;
+        color: white;
+        border: none;
+        border-radius: 6px;
+        font-size: 14px;
+        cursor: pointer;
+        font-weight: 500;
+      }
+      button:hover { background: #0284c7; }
+      .footer {
+        margin-top: 24px;
+        font-size: 11px;
+        color: #64748b;
+        line-height: 1.5;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="card">
+      <span class="badge">⚠ 离线模式</span>
+      <h1>网络连接中断</h1>
+      <p>无法连接到 Hunter Radar 服务器。</p>
+      <p>请检查您的网络连接,然后重试。</p>
+      <p class="hint">
+        提示:之前浏览过的页面与报告数据仍可在本地缓存中查看。
+      </p>
+      <button onclick="window.location.reload()">重新加载</button>
+      <p class="footer">
+        数据来源:FINRA + SEC EDGAR + Yahoo Finance。<br />
+        统计异常现象,仅供参考,不构成投资建议。
+      </p>
+    </div>
+  </body>
+</html>

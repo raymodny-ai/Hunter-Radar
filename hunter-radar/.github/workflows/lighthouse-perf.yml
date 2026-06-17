@@ -1,0 +1,83 @@
+# FE-068 Lighthouse 性能基准
+#
+# 沙箱不实跑,生产环境 push / main / nightly 时触发。
+# 目标(锁定于 v1.4.1):
+#   - performance >= 0.85
+#   - accessibility >= 0.95
+#   - best-practices >= 0.90
+#   - seo >= 0.80
+#
+# 跑 4 个核心路由:
+#   - / (首页)
+#   - /screener (榜单)
+#   - /basket (自选)
+#   - /alerts (预警)
+
+name: FE-068 Lighthouse perf
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  schedule:
+    # 每周一次性能基线巡检
+    - cron: "0 2 * * 1"
+  workflow_dispatch:
+
+jobs:
+  lighthouse:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: "pnpm"
+          cache-dependency-path: frontend/pnpm-lock.yaml
+
+      - name: Install pnpm
+        run: npm i -g pnpm@9
+
+      - name: Install deps
+        working-directory: frontend
+        run: pnpm install --frozen-lockfile
+
+      - name: Start backend
+        working-directory: backend
+        run: |
+          uv run fastapi dev app/main.py --port 8000 &
+          for i in $(seq 1 30); do
+            curl -s http://localhost:8000/health >/dev/null && break
+            sleep 1
+          done
+
+      - name: Start frontend
+        working-directory: frontend
+        run: |
+          pnpm dev --port 5173 &
+          for i in $(seq 1 30); do
+            curl -s http://localhost:5173 >/dev/null && break
+            sleep 1
+          done
+
+      - name: Run Lighthouse CI
+        working-directory: frontend
+        run: |
+          pnpm exec lighthouse-ci autorun \
+            --config=./lighthouserc.cjs \
+            --collect.numberOfRuns=3 \
+            --upload.target=filesystem
+        env:
+          LHCI_GITHUB_APP_TOKEN: ${{ secrets.LHCI_GITHUB_APP_TOKEN }}
+
+      - name: Upload Lighthouse report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: lighthouse-report
+          path: frontend/.lighthouseci/
+          retention-days: 14

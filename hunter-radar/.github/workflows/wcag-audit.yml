@@ -1,0 +1,89 @@
+# FE-066 WCAG 2.1 AA 审计骨架 + FE-067 Playwright E2E 骨架 + FE-068 Lighthouse 性能基准 CI
+#
+# 沙箱不实跑(无 pnpm install / 无 headless 浏览器),仅供生产环境在 push / PR 时触发。
+# 所有工作流均假设:
+#   1. backend 用 uv run 启动 :8000(upload-artifact: backend-logs)
+#   2. frontend 用 pnpm dev 启动 :5173(upload-artifact: frontend-logs)
+#   3. 通过 http://localhost:5173 跑 axe-core / Playwright / Lighthouse
+#
+# 触发条件:
+#   - push / pull_request to main
+#   - workflow_dispatch 手动触发
+#
+# 失败处理:
+#   - 任意一步失败 → 阻断合并(branch protection 配 required status check)
+#   - 产物上传 7 天
+
+name: FE-066 WCAG 2.1 AA + axe-core audit
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "frontend/src/**"
+      - "frontend/index.html"
+      - ".github/workflows/wcag-audit.yml"
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  wcag-audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: "pnpm"
+          cache-dependency-path: frontend/pnpm-lock.yaml
+
+      - name: Install pnpm
+        run: npm i -g pnpm@9
+
+      - name: Install deps
+        working-directory: frontend
+        run: pnpm install --frozen-lockfile
+
+      - name: Start backend
+        working-directory: backend
+        run: |
+          uv run fastapi dev app/main.py --port 8000 &
+          for i in $(seq 1 30); do
+            curl -s http://localhost:8000/health >/dev/null && break
+            sleep 1
+          done
+
+      - name: Start frontend
+        working-directory: frontend
+        run: |
+          pnpm dev --port 5173 &
+          for i in $(seq 1 30); do
+            curl -s http://localhost:5173 >/dev/null && break
+            sleep 1
+          done
+
+      - name: Run axe-core audit
+        working-directory: frontend
+        run: |
+          pnpm exec playwright test tests/wcag/audit.spec.ts \
+            --reporter=line,json \
+            2>&1 | tee axe-report.txt
+        env:
+          BASE_URL: http://localhost:5173
+
+      - name: Upload axe report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: axe-report
+          path: frontend/axe-report.txt
+          retention-days: 7
+
+      - name: Fail on violations
+        working-directory: frontend
+        run: |
+          pnpm exec tsx scripts/assert-axe-zero-violations.ts

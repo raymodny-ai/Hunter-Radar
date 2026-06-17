@@ -1,0 +1,118 @@
+{
+  "app": {
+    "name": "Hunter Radar V1.4",
+    "tagline": "穿透暗池做空,捕获机构绞杀前夜"
+  },
+  "common": {
+    "loading": "加载中…",
+    "error": "数据加载失败",
+    "retry": "重试",
+    "disclaimer": "本产品仅揭示统计异常现象,所有内容仅供研究参考,不构成投资建议。",
+    "warmup": "数据积累中(冷启动约 60 个交易日),Z-Score 暂不可用。"
+  },
+  "regime": {
+    "normal": "市场处于正常波动区间,红灯阈值 70。",
+    "panic": "市场进入恐慌模式,红灯阈值上调至 80。"
+  },
+  "lifecycle": {
+    "red": "红灯 — 终极警报",
+    "yellow": "黄灯 — 警惕",
+    "gray": "灰灯 — 中性",
+    "green": "绿灯 — 健康",
+    "init": "数据初始化中"
+  },
+  "modules": {
+    "options": "期权异常",
+    "short": "做空追踪",
+    "divergence": "量价背离",
+    "insider": "SEC 内部行为"
+  },
+  "routes": {
+    "home": "首页",
+    "basket": "自选篮子",
+    "screener": "每日猎物榜单",
+    "alerts": "预警规则(Pro)",
+    "settings": "偏好设置",
+    "subscribe": "升级 Pro"
+  },
+  "ultimateAlert": {
+    "title": "检测到多维度做空筹码共振",
+    "activeModules": "活跃模块",
+    "consecutiveDays": "连续触发",
+    "marketRegime": "市场状态",
+    "regimeNormal": "正常波动",
+    "regimePanic": "恐慌模式(阈值上调)",
+    "acknowledge": "我已了解",
+    "disclaimer": "本警报基于 FINRA / SEC EDGAR / Yahoo Finance 公开延时数据的统计异常现象生成,仅供研究参考,不构成投资建议。"
+  },
+  "history": {
+    "title": "近 90 日 Threat Score 轨迹",
+    "warmup": "轨迹数据积累中(约需 {days} 个交易日),暂不可绘制",
+    "axisLabel": "纵轴:Threat Score (EMA) · 主线:EMA 后分 · 阈值:{threshold}"
+  },
+  "lifecycleBadge": {
+    "aboveThreshold": "高于阈值",
+    "noConsecutive": "无连续触发"
+  },
+  "pwa": {
+    "install": {
+      "ariaLabel": "PWA 安装提示",
+      "hint": "将 Hunter Radar 安装到桌面,离线也能查看最新报告与预警。",
+      "iosHint": "iOS 用户:在 Safari 点击分享按钮 → 「添加到主屏幕」,即可离线使用。",
+      "cta": "安装到桌面",
+      "dismiss": "关闭安装提示",
+      "dismissShort": "稍后再说"
+    }
+  },
+  "subscribe": {
+    "title": "升级 Pro 解锁完整能力",
+    "subtitle": "免费版每日 3 次查询;Pro 版无限查询、自定义预警规则、PWA 离线缓存。",
+    "currentPlan": "当前订阅",
+    "cancelPending": "已设期末取消,本周期结束后降级为免费",
+    "cancelBtn": "期末取消",
+    "cta": "立即订阅",
+    "currentBtn": "当前订阅",
+    "priceGrid": "价格档",
+    "saveBadge": "立省",
+    "error": "订阅服务暂不可用,请稍后再试。",
+    "free": {
+      "title": "Free 免费版",
+      "period": "永久",
+      "feature1": "每日 3 次个股 Threat Score 查询",
+      "feature2": "基础 Screener 榜单(Top 20)",
+      "feature3": "公开数据 + 公开 EDGAR",
+      "cta": "当前档位"
+    },
+    "proMonthly": {
+      "period": "月",
+      "feature1": "无限 Threat Score 查询",
+      "feature2": "自选篮子 + 自定义预警规则",
+      "feature3": "PWA 离线缓存 + 推送通知"
+    },
+    "proYearly": {
+      "period": "年",
+      "feature1": "包含所有 Pro 月付功能",
+      "feature2": "8-K Item 8.01 重大事件流",
+      "feature3": "Pro-only 校准报告(v3.0+)"
+    }
+  },
+  "marketing": {
+    "proBadge": "Pro 专享",
+    "upgradeTitle": "解锁完整能力",
+    "upgradeCta": "升级 Pro",
+    "alertsReason": "预警规则引擎与多通道推送(邮件 / Web Push)仅对 Pro 订阅开放。",
+    "screenerReason": "无限 Screener 浏览 + 历史回溯仅对 Pro 订阅开放。",
+    "historyReason": "近 90 日 Threat Score 轨迹仅对 Pro 订阅开放。"
+  },
+  "quota": {
+    "exhausted": "今日查询配额已用完,请明日再来或升级 Pro",
+    "remaining": "今日剩余 {{n}} 次查询(免费版每日上限 3 次)"
+  },
+  "featureFlags": {
+    "bannerAriaLabel": "灰度发布提示",
+    "bannerText": "你正在体验 Hunter Radar V1.4 商业化版本(灰度中)。如有问题欢迎反馈。",
+    "bannerCta": "查看升级方案",
+    "bannerDismiss": "关闭提示",
+    "bannerDismissShort": "稍后再说"
+  }
+}

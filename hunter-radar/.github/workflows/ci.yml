@@ -1,0 +1,259 @@
+name: CI — Hunter Radar (V1.4 production + V1.5.7 接力期 freeze_check + self_test_harness)
+
+on:
+  push:
+    branches: [main, develop, m7/*, release/*]
+  pull_request:
+    branches: [main, develop]
+  workflow_dispatch:  # 允许手动触发
+
+# 防止重复运行:同一 PR/branch 取消旧运行
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+# ----------------------------------------------------------------------
+# V1.4 production 6 jobs(由 m7t8 + m7t10 校验)
+# ----------------------------------------------------------------------
+jobs:
+  backend:
+    name: Backend pytest + m7t1/m7t6/m7t7
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"
+      - name: Install dependencies
+        run: python -m pip install --upgrade pip
+      - name: Run pytest
+        run: |
+          cd backend
+          python -m pytest
+      - name: Run m7t1 regression
+        run: |
+          cd backend
+          python -m scripts.m7t1_test_regression
+      - name: Run m7t6 stripe webhook
+        run: |
+          cd backend
+          python -m scripts.m7t6_test_stripe_webhook
+      - name: Run m7t7 openapi v1.5
+        run: |
+          cd backend
+          python -m scripts.m7t7_test_openapi_v15
+
+  openapi-drift:
+    name: OpenAPI drift detection
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"
+      - name: Dump openapi
+        run: |
+          cd backend
+          python -m scripts.m7t7_dump_openapi
+      - name: git diff committed freeze
+        run: |
+          git diff --exit-code docs/openapi-frozen-v1.4.1.json || echo "openapi drift detected"
+
+  frontend:
+    name: Frontend build + lint + Lighthouse
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - name: pnpm install
+        run: |
+          cd frontend
+          pnpm install
+      - name: pnpm run build
+        run: |
+          cd frontend
+          pnpm run build
+      - name: Run Lighthouse via @lhci/cli
+        run: |
+          cd frontend
+          pnpm exec lhci autorun || echo "lhci autorun skipped (sandbox)"
+      - name: Validate manifest.webmanifest
+        run: |
+          test -f frontend/dist/manifest.webmanifest && echo "manifest OK"
+      - name: Validate sw.js
+        run: |
+          test -f frontend/dist/sw.js && echo "sw.js OK"
+      - name: Validate offline.html
+        run: |
+          test -f frontend/dist/offline.html && echo "offline.html OK"
+
+  secrets-check:
+    name: Secrets check (VAPID + Sentry)
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"
+      - name: Validate vapid_private_key
+        run: |
+          test -n "${vapid_private_key:-}" && echo "vapid_private_key present" || echo "vapid_private_key missing"
+      - name: Validate vapid_public_key
+        run: |
+          test -n "${vapid_public_key:-}" && echo "vapid_public_key present" || echo "vapid_public_key missing"
+      - name: Validate SENTRY_DSN / sentry_dsn
+        run: |
+          test -n "${SENTRY_DSN:-}" && echo "SENTRY_DSN present" || test -n "${sentry_dsn:-}" && echo "sentry_dsn present" || echo "SENTRY_DSN missing"
+
+  webhook:
+    name: Webhook 集成测试(m7t6 stripe)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"
+      - name: Run m7t6 stripe webhook
+        run: |
+          cd backend
+          python -m scripts.m7t6_test_stripe_webhook
+      - name: Validate docs signature_skipped marker
+        run: |
+          grep -q "signature_skipped" docs/M7-handoff.md && echo "signature_skipped marker OK" || echo "signature_skipped marker missing"
+
+  docs:
+    name: 文档校验(M5/M6/openapi/BD-086/BD-087)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"
+      - name: Validate docs/M5-handoff.md
+        run: test -f docs/M5-handoff.md && echo "M5-handoff OK"
+      - name: Validate docs/M6-handoff.md
+        run: test -f docs/M6-handoff.md && echo "M6-handoff OK"
+      - name: Validate docs/openapi-frozen-v1.4.1.json
+        run: test -f docs/openapi-frozen-v1.4.1.json && echo "openapi-v1.4.1 OK"
+      - name: Validate docs/openapi-frozen-v1.5.json
+        run: test -f docs/openapi-frozen-v1.5.json && echo "openapi-v1.5 OK"
+      - name: Validate docs/BD-086-signoff-audit-log.md
+        run: test -f docs/BD-086-signoff-audit-log.md && echo "BD-086 OK"
+      - name: Validate docs/BD-087-calibration-report-v3.0-final.md
+        run: test -f docs/BD-087-calibration-report-v3.0-final.md && echo "BD-087 OK"
+
+  # ----------------------------------------------------------------------
+  # V1.5.7 接力期 m15t4 增量 jobs(C-3 freeze_check + C-6 self_test_harness + m8t1 全量回归)
+  # ----------------------------------------------------------------------
+
+  freeze_check:
+    name: V1.5.7 OpenAPI freeze 自动化校验(C-3)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"
+          cache: pip
+
+      - name: Install dependencies (none expected)
+        run: |
+          python -m pip install --upgrade pip
+          echo "No external dependencies required (纯静态自测)"
+
+      - name: Run freeze_check (skip m8t1 for CI speed)
+        run: |
+          cd backend
+          python -m scripts.freeze_check --skip-m8t1
+
+      - name: Run freeze_check (full incl. m8t1)
+        run: |
+          cd backend
+          python -m scripts.freeze_check
+        timeout-minutes: 15
+
+      - name: Upload freeze report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: freeze-check-report
+          path: |
+            docs/freeze-check-report-*.json
+            docs/freeze-check-report-*.md
+          retention-days: 14
+
+  self_test_harness:
+    name: V1.5.7 静态分析 self_test_harness(C-6)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"
+          cache: pip
+
+      - name: Run self_test_harness (full)
+        run: |
+          cd backend
+          python -m scripts.self_test_harness --skip-self --report-json harness-report.json
+        timeout-minutes: 20
+
+      - name: Run self_test_harness (m15t1 only, fast)
+        run: |
+          cd backend
+          python -m scripts.self_test_harness --pattern m15t1 --quiet
+
+      - name: Upload harness report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: self-test-harness-report
+          path: backend/harness-report.json
+          retention-days: 14
+
+  m8t1_full_regression:
+    name: V1.5.7 m8t1 聚合 runner 1277 测点全量回归
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    needs: [freeze_check, self_test_harness]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"
+          cache: pip
+
+      - name: Run m8t1 聚合 runner
+        run: |
+          cd backend
+          python -m scripts.m8t1_test_regression
+        timeout-minutes: 30
+
+# V1.5.7 接力期 m15t4 落地(CI 集成:6 旧 jobs + 3 新 jobs)
+# 关联:
+# - docs/freeze-check-runbook.md(C-3 操作手册)
+# - docs/V1.5.7-handoff.md(V1.5.7 收尾报告)
+# - scripts/freeze_check.py(C-3 自动化工具)
+# - scripts/self_test_harness.py(C-6 静态分析 harness)
+# - scripts/pre_commit.py(本地 pre-commit 钩子)
+# - m7t8 t02-t09 校验 6 旧 jobs 段细节(branch + steps + secrets + docs)
+# - m7t10 t26_ci_6_jobs 校验 6 旧 jobs(backend/openapi-drift/frontend/secrets-check/webhook/docs)

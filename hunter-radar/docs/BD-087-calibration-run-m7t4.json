@@ -1,0 +1,66 @@
+{
+  "mode": "compare",
+  "dataset_source": "data\\backtest_dataset_real.sandbox.jsonl",
+  "sandbox": true,
+  "fetched_at": "2026-06-17T21:19:53.907430+00:00",
+  "weights_a": {
+    "name": "v1.0",
+    "values": {
+      "stock": {
+        "options": 0.3,
+        "short": 0.35,
+        "divergence": 0.2,
+        "insider": 0.15
+      },
+      "etf": {
+        "options": 0.35,
+        "short": 0.45,
+        "divergence": 0.2
+      }
+    },
+    "metrics": {
+      "n_events": 31,
+      "n_hits": 12,
+      "n_pred_positive": 12,
+      "n_true_positive": 12,
+      "precision": 1.0,
+      "recall": 0.3871,
+      "f1": 0.5581
+    }
+  },
+  "weights_b": {
+    "name": "candidate_a",
+    "values": {
+      "stock": {
+        "options": 0.25,
+        "short": 0.4,
+        "divergence": 0.2,
+        "insider": 0.15
+      },
+      "etf": {
+        "options": 0.3,
+        "short": 0.5,
+        "divergence": 0.2
+      }
+    },
+    "metrics": {
+      "n_events": 31,
+      "n_hits": 10,
+      "n_pred_positive": 10,
+      "n_true_positive": 10,
+      "precision": 1.0,
+      "recall": 0.3226,
+      "f1": 0.4878
+    }
+  },
+  "mann_whitney_u": {
+    "U_statistic": 542.5,
+    "p_value": 0.2923,
+    "n1": 31,
+    "n2": 31,
+    "significant_at_005": false
+  },
+  "delta_hit_rate": -0.0645,
+  "delta_precision": 0.0,
+  "delta_f1": -0.0703
+}

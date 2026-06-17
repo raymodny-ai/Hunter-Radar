@@ -1,0 +1,128 @@
+{
+  "freeze_version": "v1.5.3",
+  "freeze_date": "2026-06-15",
+  "prior_freeze": "v1.5.2",
+  "endpoints_total": 56,
+  "endpoints_modified_in_v153": 0,
+  "endpoints_added_in_v153": 0,
+  "endpoints_removed_in_v153": 0,
+  "endpoints_documented_in_v153": 0,
+  "modified_modules": [
+    {
+      "path": "backend/app/core/auth.py",
+      "items": [
+        "VALID_ROLES / DEFAULT_ROLE constants",
+        "is_valid_role / normalize_role helpers",
+        "Role = str type alias (backward-compat)",
+        "TUser.role: str + is_admin via normalize_role",
+        "_parse_jwt_user uses normalize_role",
+        "require_admin_role adds request: Request + IP whitelist merge",
+        "create_access_token(role: str = 'user')",
+        "__all__ adds 4 admin + 4 role helper symbols"
+      ]
+    },
+    {
+      "path": "backend/app/api/admin.py",
+      "items": [
+        "_resolve_auth_mode simplified to early return",
+        "Removed _check_ip_whitelist import (no double check)"
+      ]
+    },
+    {
+      "path": "backend/scripts/m7t2_sign_goldset.py",
+      "items": [
+        "Runtime block: HR_ALLOW_LEGACY_SCRIPTS=1 to allow",
+        "Default reject with return 2 + helpful error to reviewer_cli.py"
+      ]
+    },
+    {
+      "path": "backend/scripts/reviewer_cli.py",
+      "items": [
+        "--dry-run global flag (no writes when set)",
+        "_resolve_token_hex_len() reads REVIEWER_TOKEN_HEX_LEN env",
+        "TOKEN_HEX_LEN_DEFAULT=32 / MIN=16 / PROD_RECOMMENDED=64",
+        "cmd_register/cmd_revoke/cmd_sign accept dry_run param"
+      ]
+    },
+    {
+      "path": "backend/scripts/m10t7_p2_merge.py",
+      "items": [
+        "--json-only global flag (single-line JSON for CI/jq)"
+      ]
+    }
+  ],
+  "fetch_source_unified": [
+    "sec_httpx",
+    "yfinance",
+    "user_provided_price",
+    "posthog",
+    "plausible",
+    "sandbox_stub",
+    "sandbox_stub_v15_prep",
+    "sandbox_skip_admin"
+  ],
+  "auth_modes": [
+    "prod_admin_jwt",
+    "prod_admin_apikey",
+    "sandbox_skip_admin"
+  ],
+  "unpassed_items_resolved": [
+    {"id": "M10-UNPASSED-1", "title": "auth.py __all__ 缺 admin 鉴权函数导出", "fixed_in": "m11t1"},
+    {"id": "M10-UNPASSED-2", "title": "require_admin_role 内部未调 IP 白名单", "fixed_in": "m11t2"},
+    {"id": "M10-UNPASSED-3", "title": "Role = Literal[user, admin] 不可扩展", "fixed_in": "m11t3"},
+    {"id": "M10-UNPASSED-4", "title": "m7t2_sign_goldset.py 缺 runtime 拦截", "fixed_in": "m11t4"},
+    {"id": "M10-UNPASSED-5", "title": "reviewer_cli.py 无 dry-run 模式", "fixed_in": "m11t4"},
+    {"id": "M10-UNPASSED-6", "title": "TOKEN_HEX_LEN=32 硬编码(生产应≥64)", "fixed_in": "m11t4"},
+    {"id": "M10-UNPASSED-7", "title": "m10t7_p2_merge.py 缺 --json-only 输出", "fixed_in": "m11t5"}
+  ],
+  "r_risks_resolved": [
+    {"id": "R-37", "title": "EDGAR 真实 SEC API 接入", "resolved_in": "m10t1"},
+    {"id": "R-38", "title": "ETF 真实 AP 代理数据源", "resolved_in": "m10t2"},
+    {"id": "R-39", "title": "Analytics 真实事件库接入", "resolved_in": "m10t3"}
+  ],
+  "static_test_aggregate": {
+    "M5_scripts": 11,
+    "M5_testpoints": 116,
+    "M6_scripts": 10,
+    "M6_testpoints": 194,
+    "M7_scripts": 9,
+    "M7_testpoints": 213,
+    "M8_scripts": 5,
+    "M8_testpoints": 79,
+    "M9_scripts": 6,
+    "M9_testpoints": 150,
+    "M10_scripts": 8,
+    "M10_testpoints": 200,
+    "M11_scripts": 5,
+    "M11_testpoints": 125,
+    "M11_pending_at_freeze": 1,
+    "M11_total_testpoints": 150,
+    "total_scripts": 54,
+    "total_testpoints": 1077
+  },
+  "M11_scripts": [
+    {"id": "m11t1", "name": "m11t1_test_auth_all_export.py", "testpoints": 25, "status": "COMPLETE"},
+    {"id": "m11t2", "name": "m11t2_test_admin_role_ip_integration.py", "testpoints": 25, "status": "COMPLETE"},
+    {"id": "m11t3", "name": "m11t3_test_role_extension.py", "testpoints": 25, "status": "COMPLETE"},
+    {"id": "m11t4", "name": "m11t4_test_reviewer_cli_toolchain.py", "testpoints": 25, "status": "COMPLETE"},
+    {"id": "m11t5", "name": "m11t5_test_p2_json_only.py", "testpoints": 25, "status": "COMPLETE"},
+    {"id": "m11t6", "name": "m11t6_test_v153_finalize.py", "testpoints": 25, "status": "COMPLETE"}
+  ],
+  "production_env_recommendations": {
+    "HR_ALLOW_LEGACY_SCRIPTS": "unset or not '1' (reject m7t2)",
+    "REVIEWER_TOKEN_HEX_LEN": "64 (production recommended)",
+    "ADMIN_API_KEY": ">= 32 chars",
+    "ADMIN_IP_WHITELIST": "set (empty = unlimited)",
+    "ADMIN_ROLE_ENABLED": "true (production)",
+    "VAPID_PUBLIC_KEY": "set (HR_VAPID_* must NOT be set)",
+    "VAPID_PRIVATE_KEY": "set",
+    "ENV": "production",
+    "DEBUG": "false",
+    "SECRET_KEY": ">= 32 chars",
+    "DATABASE_URL": "set",
+    "DATABASE_URL_SYNC": "set"
+  },
+  "next_freeze_unlocks": {
+    "V1.5.4_m12": "candidate items: C-1 jwt exception细化 / C-2 super_admin / C-3 vapid_mode / C-4 m7t2 物理删除 / C-5 OpenAPI 评审字段 / C-6 真实部署演练"
+  }
+}

@@ -1,0 +1,151 @@
+{
+  "openapi": "3.0.3",
+  "info": {
+    "title": "Hunter Radar V1.5.2 OpenAPI Freeze",
+    "version": "1.5.2",
+    "description": "M10 接力期 freeze:在 v1.5.1 基础上 0 新增端点 + 3 端点响应字段增强(EDGAR + ETF + Analytics)+ 4 admin 端点文档化公开评审;新增 7 项 V1.5.3 待优化项;7 真实数据源接入(httpx/yfinance/postHog/Plausible)+ sandbox fallback 双轨。",
+    "freeze_time": "2026-06-15",
+    "freeze_owner": "m10t8 接力期",
+    "previous_version": "1.5.1",
+    "previous_freeze": "docs/openapi-frozen-v1.5.1.json"
+  },
+  "endpoints_total": 56,
+  "endpoints_new_in_v152": 0,
+  "endpoints_modified_in_v152": 3,
+  "endpoints_documented_in_v152": 4,
+  "tags_count": 16,
+  "modules_total": 14,
+  "modules_new_in_v152": 0,
+  "new_modules": [],
+  "modified_modules": [
+    {
+      "path": "backend/app/api/edgar.py",
+      "endpoint": "GET /api/v1/edgar/search",
+      "new_response_fields": ["fetch_source", "http_status", "latency_ms", "warning"],
+      "todo": "m10t1",
+      "fallback_chain": [
+        "httpx → https://efts.sec.gov/LATEST/search-index",
+        "fallback sandbox_stub (review_mode=sandbox_stub)"
+      ]
+    },
+    {
+      "path": "backend/app/api/etf.py",
+      "endpoint": "GET /api/v1/etf/premium-discount",
+      "new_response_fields": [
+        "inav_deviation",
+        "volume_5d_avg",
+        "volume_30d_avg",
+        "volume_spike_ratio",
+        "fetch_source",
+        "http_latency_ms",
+        "warning"
+      ],
+      "param_changes": {
+        "price": "从必填改为可选(float | None, gt=0, le=10000),缺省时走 yfinance 真实代理"
+      },
+      "todo": "m10t2",
+      "fallback_chain": [
+        "yfinance 真实代理数据(15 字段 EtfProxyIndicators)",
+        "fallback sandbox_stub_v15_prep"
+      ]
+    },
+    {
+      "path": "backend/app/api/analytics.py",
+      "endpoint": "GET /api/v1/analytics/events",
+      "new_response_fields": ["fetch_source", "http_status", "latency_ms", "warning"],
+      "todo": "m10t3",
+      "fallback_chain": [
+        "postHog(优先,https://us.i.posthog.com)",
+        "Plausible(次选,https://plausible.io)",
+        "fallback sandbox_stub_v15_prep(in-memory ring buffer)"
+      ]
+    }
+  ],
+  "documented_endpoints": [
+    {
+      "path": "backend/app/api/admin.py",
+      "endpoints": [
+        "POST /api/v1/admin/etl/run",
+        "POST /api/v1/admin/backtest/run",
+        "GET /api/v1/admin/backtest/result",
+        "POST /api/v1/admin/webhook/replay"
+      ],
+      "todo": "m10t4",
+      "documentation": "docs/ADMIN_ROLE_V152.md",
+      "auth_modes": ["prod_admin_jwt", "prod_admin_apikey", "sandbox_skip_admin"]
+    }
+  ],
+  "deprecated": [
+    {
+      "item": "m7t2_sign_goldset.py",
+      "replacement": "reviewer_cli.py",
+      "todo": "m10t5",
+      "remove_in": "V1.5.3"
+    },
+    {
+      "item": "_mann_whitney_u 简化版",
+      "replacement": "scipy.stats.mannwhitneyu(use_continuity=False)",
+      "todo": "m10t6",
+      "fallback_retained": "_mann_whitney_u_simplified"
+    }
+  ],
+  "fetch_source_unified": [
+    {"value": "sec_httpx", "meaning": "EDGAR 真实 SEC API(httpx OK)", "applies_to": ["/api/v1/edgar/search"]},
+    {"value": "yfinance", "meaning": "ETF 真实 AP 代理数据源", "applies_to": ["/api/v1/etf/premium-discount"]},
+    {"value": "user_provided_price", "meaning": "用户提供 price(沿用 V1.5.1 行为)", "applies_to": ["/api/v1/etf/premium-discount"]},
+    {"value": "posthog", "meaning": "postHog 真实事件库", "applies_to": ["/api/v1/analytics/events"]},
+    {"value": "plausible", "meaning": "Plausible 真实事件库", "applies_to": ["/api/v1/analytics/events"]},
+    {"value": "sandbox_stub", "meaning": "沙箱 stub fallback(无真实 API 可调)", "applies_to": ["edgar", "etf", "analytics"]},
+    {"value": "sandbox_stub_v15_prep", "meaning": "V1.5 prep 沙箱 stub(in-memory ring buffer)", "applies_to": ["analytics"]},
+    {"value": "sandbox_skip_admin", "meaning": "admin 鉴权沙箱 fallback", "applies_to": ["admin/*"]}
+  ],
+  "unpassed_items_for_v153": [
+    {"id": "M10-UNPASSED-1", "risk": "auth.py __all__ 缺 admin 鉴权函数导出", "fix": "显式 re-export require_admin_role / Role / _check_api_key / _check_ip_whitelist", "todo": "m10t4"},
+    {"id": "M10-UNPASSED-2", "risk": "require_admin_role 内部未调 _check_ip_whitelist(由 admin.py _resolve_auth_mode 二次校验)", "fix": "合并到单一 require_admin_role 入口", "todo": "m10t4"},
+    {"id": "M10-UNPASSED-3", "risk": "Role = Literal['user', 'admin'] 仅 2 种不可扩展", "fix": "引入 role: str + is_valid_role() helper", "todo": "m10t4"},
+    {"id": "M10-UNPASSED-4", "risk": "m7t2_sign_goldset.py 缺 runtime 拦截(当前仅 docstring 警告)", "fix": "if __name__ == '__main__': raise SystemExit('DEPRECATED ...')", "todo": "m10t5"},
+    {"id": "M10-UNPASSED-5", "risk": "reviewer_cli.py 无 dry-run 模式(每次 sign 必写 goldset)", "fix": "加 --dry-run 全局 flag", "todo": "m10t5"},
+    {"id": "M10-UNPASSED-6", "risk": "TOKEN_HEX_LEN = 32 是硬编码,生产应 ≥64 字符", "fix": "环境变量 REVIEWER_TOKEN_HEX_LEN 覆盖", "todo": "m10t5"},
+    {"id": "M10-UNPASSED-7", "risk": "m10t7_p2_merge.py 缺 --json-only 输出(供 CI 用)", "fix": "加 --json-only flag", "todo": "m10t7"}
+  ],
+  "r_risks_resolved": [
+    {"id": "R-37", "description": "EDGAR 真实 SEC API 接入", "todo": "m10t1", "status": "RESOLVED"},
+    {"id": "R-38", "description": "ETF 真实 AP 代理数据源", "todo": "m10t2", "status": "RESOLVED"},
+    {"id": "R-39", "description": "Analytics 真实事件库接入", "todo": "m10t3", "status": "RESOLVED"}
+  ],
+  "static_test_aggregate": {
+    "M5_scripts": 11,
+    "M5_testpoints": 122,
+    "M6_scripts": 9,
+    "M6_testpoints": 194,
+    "M7_scripts": 9,
+    "M7_testpoints": 213,
+    "M8_scripts": 4,
+    "M8_testpoints": 79,
+    "M9_scripts": 6,
+    "M9_testpoints": 150,
+    "M10_scripts": 7,
+    "M10_testpoints": 175,
+    "total_scripts": 46,
+    "total_testpoints": 933
+  },
+  "constraints_inherited": [
+    "新增端点:必须在 freeze 解除流程中登记,不得私下增路由",
+    "修改端点(字段 / 路径 / 状态码 / 错误体):必须先 freeze 解除,改完再 freeze",
+    "删除端点:必须先 freeze 解除,标 deprecated 90 天后才物理删除",
+    "数据缺失语义:统一返 200 + 空数组 / 空对象,严禁 5xx 透传(Redis 沙箱降级到原函数)",
+    "沙箱 fallback 显式标注(M9 加固,V1.5.2 沿用):所有 V1.5.2 端点必须含 sandbox=true + review_mode 字段",
+    "真实数据源 fetch_source 显式标注(V1.5.2 新增):EDGAR/ETF/Analytics 端点必须含 fetch_source + http_status + latency_ms + warning 4 字段"
+  ],
+  "documentation_references": [
+    "docs/V1.5.2-handoff.md",
+    "docs/openapi-frozen-v1.5.2.md",
+    "docs/openapi-frozen-v1.5.2.json",
+    "docs/ADMIN_ROLE_V152.md",
+    "docs/REVIEWER_CLI_MIGRATION.md",
+    "docs/V1.5-handoff.md",
+    "docs/openapi-frozen-v1.5.1.md",
+    "backend/scripts/m10t8_test_v152_finalize.py",
+    "backend/scripts/m8t1_test_regression.py"
+  ]
+}

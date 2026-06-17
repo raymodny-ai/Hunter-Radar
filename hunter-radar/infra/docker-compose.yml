@@ -1,0 +1,92 @@
+# Hunter Radar V1.4 — Infrastructure
+# 一键起: docker compose up -d
+# 停服务: docker compose down
+# 重置数据: docker compose down -v
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: hunter_postgres
+    environment:
+      POSTGRES_USER: hunter
+      POSTGRES_PASSWORD: hunter
+      POSTGRES_DB: hunter_radar
+    ports:
+      - "5432:5432"
+    volumes:
+      - hunter_pg_data:/var/lib/postgresql/data
+      - ../backend/sql:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U hunter -d hunter_radar"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    container_name: hunter_redis
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  airflow-db:
+    image: postgres:16-alpine
+    container_name: hunter_airflow_db
+    environment:
+      POSTGRES_USER: airflow
+      POSTGRES_PASSWORD: airflow
+      POSTGRES_DB: airflow
+    volumes:
+      - hunter_airflow_db:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U airflow"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  airflow-webserver:
+    image: apache/airflow:2.10.2-python3.12
+    container_name: hunter_airflow_web
+    depends_on:
+      airflow-db:
+        condition: service_healthy
+    environment:
+      AIRFLOW__CORE__EXECUTOR: LocalExecutor
+      AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://airflow:airflow@airflow-db/airflow
+      AIRFLOW__CORE__LOAD_EXAMPLES: "false"
+      AIRFLOW__WEBSERVER__EXPOSE_CONFIG: "true"
+      _PIP_ADDITIONAL_REQUIREMENTS: "apache-airflow-providers-postgres apache-airflow-providers-redis httpx tenacity beautifulsoup4 lxml pandas numpy scipy yfinance"
+    ports:
+      - "8080:8080"
+    volumes:
+      - ../backend/dags:/opt/airflow/dags:ro
+      - ../backend/etl:/opt/airflow/etl:ro
+    command: webserver
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+
+  airflow-scheduler:
+    image: apache/airflow:2.10.2-python3.12
+    container_name: hunter_airflow_sched
+    depends_on:
+      airflow-db:
+        condition: service_healthy
+    environment:
+      AIRFLOW__CORE__EXECUTOR: LocalExecutor
+      AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://airflow:airflow@airflow-db/airflow
+      _PIP_ADDITIONAL_REQUIREMENTS: "apache-airflow-providers-postgres apache-airflow-providers-redis httpx tenacity beautifulsoup4 lxml pandas numpy scipy yfinance"
+    volumes:
+      - ../backend/dags:/opt/airflow/dags:ro
+      - ../backend/etl:/opt/airflow/etl:ro
+    command: scheduler
+
+volumes:
+  hunter_pg_data:
+  hunter_airflow_db:

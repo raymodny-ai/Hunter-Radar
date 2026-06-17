@@ -1,0 +1,611 @@
+{
+  "openapi": "3.0.3",
+  "info": {
+    "title": "Hunter Radar V1.4",
+    "version": "1.4.0",
+    "description": "美股盘后另类数据雷达 — 期权异常/全监管做空/量价背离/SEC 内部行为 + Threat Score 共振看板",
+    "x-logo": {
+      "url": "https://hunter-radar.example/logo.png"
+    }
+  },
+  "servers": [
+    {"url": "http://localhost:8000", "description": "Local dev"},
+    {"url": "https://api.hunter-radar.example", "description": "Production"}
+  ],
+  "tags": [
+    {"name": "health", "description": "运维探活(无 /api/v1 前缀)"},
+    {"name": "symbols", "description": "单标的多维分析 + 终极警报"},
+    {"name": "regime", "description": "市场状态门控(BD-063)"},
+    {"name": "screener", "description": "每日猎物榜单(BD-072,BD-080 12h 缓存)"},
+    {"name": "basket", "description": "自选篮(BD-070/071,M4 新增)"},
+    {"name": "alerts", "description": "预警规则(BD-073,M4 新增)"}
+  ],
+  "paths": {
+    "/health": {
+      "get": {
+        "tags": ["health"],
+        "summary": "健康检查",
+        "description": "DB+Redis 探活,降级返 'degraded'",
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "status": {"type": "string", "enum": ["ok", "degraded"]},
+                    "version": {"type": "string"},
+                    "db": {"type": "boolean"},
+                    "redis": {"type": "boolean"}
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/": {
+      "get": {
+        "tags": ["health"],
+        "summary": "根描述",
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "name": {"type": "string"},
+                    "version": {"type": "string"},
+                    "docs": {"type": "string"},
+                    "openapi": {"type": "string"}
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/symbols/lookup": {
+      "get": {
+        "tags": ["symbols"],
+        "summary": "搜索自动补全(BD-077)",
+        "description": "M0/M1 stub,二期接 symbol_master pg_trgm 索引",
+        "parameters": [{"name": "q", "in": "query", "required": true, "schema": {"type": "string", "minLength": 1, "maxLength": 10}}],
+        "responses": {"200": {"description": "OK", "content": {"application/json": {"schema": {"type": "array", "items": {"type": "object"}}}}}}
+      }
+    },
+    "/api/v1/symbols/{ticker}/threat": {
+      "get": {
+        "tags": ["symbols"],
+        "summary": "最新 Threat Score(BD-080 12h 缓存)",
+        "parameters": [{"name": "ticker", "in": "path", "required": true, "schema": {"type": "string"}}],
+        "responses": {
+          "200": {"description": "OK", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/ThreatScoreDTO"}}}},
+          "404": {"description": "Ticker 无数据", "content": {"application/json": {"schema": {"type": "object"}}}}
+        }
+      }
+    },
+    "/api/v1/symbols/{ticker}/options-anomaly": {
+      "get": {
+        "tags": ["symbols"],
+        "summary": "§3.1 末日 Put 异常合约列表(BD-020)",
+        "parameters": [{"name": "ticker", "in": "path", "required": true, "schema": {"type": "string"}}],
+        "responses": {"200": {"description": "OK", "content": {"application/json": {"schema": {"type": "array", "items": {"$ref": "#/components/schemas/OptionsAnomalyDTO"}}}}}}
+      }
+    },
+    "/api/v1/symbols/{ticker}/short-iceberg": {
+      "get": {
+        "tags": ["symbols"],
+        "summary": "§3.2 水位图(BD-033)",
+        "parameters": [{"name": "ticker", "in": "path", "required": true, "schema": {"type": "string"}}],
+        "responses": {"200": {"description": "OK", "content": {"application/json": {"schema": {"type": "array", "items": {"$ref": "#/components/schemas/ShortIcebergDTO"}}}}}}
+      }
+    },
+    "/api/v1/symbols/{ticker}/divergence": {
+      "get": {
+        "tags": ["symbols"],
+        "summary": "§3.3 量价背离(BD-042)",
+        "parameters": [{"name": "ticker", "in": "path", "required": true, "schema": {"type": "string"}}],
+        "responses": {"200": {"description": "OK", "content": {"application/json": {"schema": {"type": "array", "items": {"$ref": "#/components/schemas/DivergenceDTO"}}}}}}
+      }
+    },
+    "/api/v1/symbols/{ticker}/threat-history": {
+      "get": {
+        "tags": ["symbols"],
+        "summary": "§3.5 90 日 Threat Score 轨迹(BD-066,BD-080 12h 缓存)",
+        "parameters": [
+          {"name": "ticker", "in": "path", "required": true, "schema": {"type": "string"}},
+          {"name": "days", "in": "query", "required": false, "schema": {"type": "integer", "default": 90, "minimum": 1, "maximum": 365}}
+        ],
+        "responses": {"200": {"description": "OK"}}
+      }
+    },
+    "/api/v1/symbols/{ticker}/ultimate-alert": {
+      "get": {
+        "tags": ["symbols"],
+        "summary": "§3.5 该 ticker 最近一条终极警报(BD-064 / FE-031)",
+        "description": "404 表示无活跃警报,前端 useUltimateAlert 视为 null",
+        "parameters": [{"name": "ticker", "in": "path", "required": true, "schema": {"type": "string"}}],
+        "responses": {
+          "200": {"description": "OK", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/UltimateAlertDTO"}}}},
+          "404": {"description": "无活跃警报", "content": {"application/json": {"schema": {"type": "object"}}}}
+        }
+      }
+    },
+    "/api/v1/regime": {
+      "get": {
+        "tags": ["regime"],
+        "summary": "市场状态门控(BD-063)",
+        "description": "VIX > 30 或 SPX < MA20 → panic,红灯阈值上调到 80",
+        "parameters": [{"name": "trade_date", "in": "query", "required": false, "schema": {"type": "string", "format": "date"}}],
+        "responses": {"200": {"description": "OK", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/RegimeDTO"}}}}}
+      }
+    },
+    "/api/v1/screener": {
+      "get": {
+        "tags": ["screener"],
+        "summary": "每日猎物榜单(BD-072,BD-080 12h 缓存)",
+        "parameters": [
+          {"name": "top", "in": "query", "required": false, "schema": {"type": "integer", "default": 50, "minimum": 1, "maximum": 200}},
+          {"name": "symbol_type", "in": "query", "required": false, "schema": {"type": "string", "enum": ["stock", "etf"]}},
+          {"name": "trade_date", "in": "query", "required": false, "schema": {"type": "string", "format": "date"}}
+        ],
+        "responses": {"200": {"description": "OK", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/ScreenerDTO"}}}}}
+      }
+    },
+    "/api/v1/baskets": {
+      "post": {
+        "tags": ["basket"],
+        "summary": "创建自选篮(BD-070)",
+        "requestBody": {"required": true, "content": {"application/json": {"schema": {"$ref": "#/components/schemas/BasketCreateDTO"}}}},
+        "responses": {
+          "201": {"description": "Created", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/BasketDTO"}}}},
+          "503": {"description": "服务降级(沙箱无 PG)"}
+        }
+      },
+      "get": {
+        "tags": ["basket"],
+        "summary": "列自选篮(BD-070)",
+        "description": "无 X-User-Id 时返全部(管理员/沙箱视角)",
+        "parameters": [{"name": "X-User-Id", "in": "header", "required": false, "schema": {"type": "string", "format": "uuid"}}],
+        "responses": {"200": {"description": "OK", "content": {"application/json": {"schema": {"type": "array", "items": {"$ref": "#/components/schemas/BasketDTO"}}}}}}
+      }
+    },
+    "/api/v1/baskets/{basket_id}": {
+      "get": {
+        "tags": ["basket"],
+        "summary": "篮详情(BD-070)",
+        "parameters": [{"name": "basket_id", "in": "path", "required": true, "schema": {"type": "integer"}}],
+        "responses": {
+          "200": {"description": "OK", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/BasketDTO"}}}},
+          "404": {"description": "篮不存在"}
+        }
+      },
+      "put": {
+        "tags": ["basket"],
+        "summary": "改名/改描述(BD-070)",
+        "parameters": [{"name": "basket_id", "in": "path", "required": true, "schema": {"type": "integer"}}],
+        "requestBody": {"required": true, "content": {"application/json": {"schema": {"$ref": "#/components/schemas/BasketUpdateDTO"}}}},
+        "responses": {"200": {"description": "OK"}, "404": {"description": "篮不存在"}}
+      },
+      "delete": {
+        "tags": ["basket"],
+        "summary": "删除篮(级联删成员+快照,BD-070)",
+        "parameters": [{"name": "basket_id", "in": "path", "required": true, "schema": {"type": "integer"}}],
+        "responses": {"204": {"description": "No Content"}, "404": {"description": "篮不存在"}}
+      }
+    },
+    "/api/v1/baskets/{basket_id}/members": {
+      "post": {
+        "tags": ["basket"],
+        "summary": "增篮子成员(BD-070)",
+        "parameters": [{"name": "basket_id", "in": "path", "required": true, "schema": {"type": "integer"}}],
+        "requestBody": {"required": true, "content": {"application/json": {"schema": {"$ref": "#/components/schemas/BasketAddMembersDTO"}}}},
+        "responses": {"200": {"description": "OK", "content": {"application/json": {"schema": {"type": "object", "properties": {"basket_id": {"type": "integer"}, "inserted": {"type": "integer"}, "submitted": {"type": "integer"}}}}}}}
+      },
+      "get": {
+        "tags": ["basket"],
+        "summary": "列篮子成员(BD-070)",
+        "parameters": [{"name": "basket_id", "in": "path", "required": true, "schema": {"type": "integer"}}],
+        "responses": {"200": {"description": "OK", "content": {"application/json": {"schema": {"type": "array", "items": {"$ref": "#/components/schemas/BasketMemberDTO"}}}}}}
+      }
+    },
+    "/api/v1/baskets/{basket_id}/members/{ticker}": {
+      "delete": {
+        "tags": ["basket"],
+        "summary": "删篮子成员(BD-070)",
+        "parameters": [
+          {"name": "basket_id", "in": "path", "required": true, "schema": {"type": "integer"}},
+          {"name": "ticker", "in": "path", "required": true, "schema": {"type": "string"}}
+        ],
+        "responses": {"204": {"description": "No Content"}, "404": {"description": "成员不存在"}}
+      }
+    },
+    "/api/v1/baskets/{basket_id}/distribution": {
+      "get": {
+        "tags": ["basket"],
+        "summary": "篮子分布(BD-071,带落库 basket_snapshot)",
+        "description": "数据缺失时返 404 + {message: 空篮子或无数据}",
+        "parameters": [
+          {"name": "basket_id", "in": "path", "required": true, "schema": {"type": "integer"}},
+          {"name": "days", "in": "query", "required": false, "schema": {"type": "integer", "default": 30, "minimum": 1, "maximum": 365}}
+        ],
+        "responses": {
+          "200": {"description": "OK", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/BasketDistributionDTO"}}}},
+          "400": {"description": "days 越界"},
+          "404": {"description": "空篮子或无数据"}
+        }
+      }
+    },
+    "/api/v1/alert-rules": {
+      "post": {
+        "tags": ["alerts"],
+        "summary": "创建预警规则(BD-073)",
+        "requestBody": {"required": true, "content": {"application/json": {"schema": {"$ref": "#/components/schemas/AlertRuleCreateDTO"}}}},
+        "responses": {
+          "201": {"description": "Created", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/AlertRuleDTO"}}}},
+          "503": {"description": "服务降级(沙箱无 PG)"}
+        }
+      },
+      "get": {
+        "tags": ["alerts"],
+        "summary": "列预警规则(BD-073)",
+        "parameters": [{"name": "X-User-Id", "in": "header", "required": false, "schema": {"type": "string", "format": "uuid"}}],
+        "responses": {"200": {"description": "OK", "content": {"application/json": {"schema": {"type": "array", "items": {"$ref": "#/components/schemas/AlertRuleDTO"}}}}}}
+      }
+    },
+    "/api/v1/alert-rules/{rule_id}": {
+      "get": {
+        "tags": ["alerts"],
+        "summary": "预警规则详情(BD-073)",
+        "parameters": [{"name": "rule_id", "in": "path", "required": true, "schema": {"type": "integer"}}],
+        "responses": {
+          "200": {"description": "OK", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/AlertRuleDTO"}}}},
+          "404": {"description": "规则不存在"}
+        }
+      },
+      "put": {
+        "tags": ["alerts"],
+        "summary": "改规则(改名 / DSL / channels / is_active,BD-073)",
+        "parameters": [{"name": "rule_id", "in": "path", "required": true, "schema": {"type": "integer"}}],
+        "requestBody": {"required": true, "content": {"application/json": {"schema": {"$ref": "#/components/schemas/AlertRuleUpdateDTO"}}}},
+        "responses": {"200": {"description": "OK"}, "404": {"description": "规则不存在"}}
+      },
+      "delete": {
+        "tags": ["alerts"],
+        "summary": "删除规则(级联删 alert_event,BD-073)",
+        "parameters": [{"name": "rule_id", "in": "path", "required": true, "schema": {"type": "integer"}}],
+        "responses": {"204": {"description": "No Content"}, "404": {"description": "规则不存在"}}
+      }
+    },
+    "/api/v1/alert-rules/{rule_id}/eval": {
+      "post": {
+        "tags": ["alerts"],
+        "summary": "评估规则(BD-073,推送留待 BD-074)",
+        "description": "数据缺失时 triggered=False + rationale 显式说明 + 顶层 warning 字段(严禁 mock 伪装)",
+        "parameters": [{"name": "rule_id", "in": "path", "required": true, "schema": {"type": "integer"}}],
+        "requestBody": {"required": true, "content": {"application/json": {"schema": {"$ref": "#/components/schemas/AlertRuleEvalRequestDTO"}}}},
+        "responses": {
+          "200": {"description": "OK", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/AlertRuleEvalSummaryDTO"}}}},
+          "404": {"description": "规则不存在"},
+          "409": {"description": "规则 is_active=False"}
+        }
+      }
+    },
+    "/api/v1/alerts/rules": {
+      "post": {
+        "tags": ["alerts"],
+        "summary": "创建预警规则(BD-073 兼容别名,推荐用 /alert-rules)",
+        "description": "M3 占位,内部转发到 /alert-rules",
+        "requestBody": {"required": true, "content": {"application/json": {"schema": {"$ref": "#/components/schemas/AlertRuleCreateDTO"}}}},
+        "responses": {
+          "201": {"description": "Created", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/AlertRuleDTO"}}}}
+        }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "ScreenerRowDTO": {
+        "type": "object",
+        "required": ["rank", "symbol", "name", "symbol_type", "threat_score", "signal_lifecycle", "modules_active"],
+        "properties": {
+          "rank": {"type": "integer", "minimum": 1},
+          "symbol": {"type": "string"},
+          "name": {"type": "string"},
+          "symbol_type": {"type": "string", "enum": ["stock", "etf"]},
+          "threat_score": {"type": "number", "minimum": 0, "maximum": 100},
+          "signal_lifecycle": {"type": "string", "enum": ["init", "red", "yellow", "gray", "green"]},
+          "modules_active": {"type": "array", "items": {"type": "string"}},
+          "nl_summary": {"type": ["string", "null"]}
+        }
+      },
+      "ScreenerDTO": {
+        "type": "object",
+        "required": ["trade_date", "rows", "total_scanned"],
+        "properties": {
+          "trade_date": {"type": "string", "format": "date"},
+          "rows": {"type": "array", "items": {"$ref": "#/components/schemas/ScreenerRowDTO"}},
+          "total_scanned": {"type": "integer", "minimum": 0}
+        }
+      },
+      "BasketCreateDTO": {
+        "type": "object",
+        "required": ["name"],
+        "properties": {
+          "name": {"type": "string", "minLength": 1, "maxLength": 80},
+          "description": {"type": ["string", "null"], "maxLength": 500}
+        }
+      },
+      "BasketDTO": {
+        "type": "object",
+        "required": ["id", "user_id", "name", "description", "member_count", "created_at", "updated_at"],
+        "properties": {
+          "id": {"type": "integer"},
+          "user_id": {"type": "string", "format": "uuid"},
+          "name": {"type": "string"},
+          "description": {"type": ["string", "null"]},
+          "member_count": {"type": "integer", "minimum": 0},
+          "created_at": {"type": "string", "format": "date-time"},
+          "updated_at": {"type": "string", "format": "date-time"}
+        }
+      },
+      "BasketUpdateDTO": {
+        "type": "object",
+        "properties": {
+          "name": {"type": ["string", "null"], "minLength": 1, "maxLength": 80},
+          "description": {"type": ["string", "null"], "maxLength": 500}
+        }
+      },
+      "BasketAddMembersDTO": {
+        "type": "object",
+        "required": ["tickers"],
+        "properties": {
+          "tickers": {"type": "array", "items": {"type": "string"}, "minItems": 1, "maxItems": 200}
+        }
+      },
+      "BasketMemberDTO": {
+        "type": "object",
+        "required": ["ticker", "added_at"],
+        "properties": {
+          "ticker": {"type": "string"},
+          "added_at": {"type": "string", "format": "date-time"}
+        }
+      },
+      "BasketDistributionByTickerDTO": {
+        "type": "object",
+        "required": ["ticker", "latest", "mean", "max", "lifecycle"],
+        "properties": {
+          "ticker": {"type": "string"},
+          "latest": {"type": ["number", "null"], "minimum": 0, "maximum": 100},
+          "mean": {"type": "number"},
+          "max": {"type": "number"},
+          "lifecycle": {"type": "string", "enum": ["init", "red", "yellow", "gray", "green"]}
+        }
+      },
+      "BasketDistributionDTO": {
+        "type": "object",
+        "required": ["basket_id", "trade_date", "ticker_count", "day_count", "mean", "p25", "p50", "p75", "p90", "p99", "min_score", "max_score", "by_ticker"],
+        "properties": {
+          "basket_id": {"type": "integer"},
+          "trade_date": {"type": "string", "format": "date"},
+          "ticker_count": {"type": "integer"},
+          "day_count": {"type": "integer"},
+          "mean": {"type": "number"},
+          "p25": {"type": "number"},
+          "p50": {"type": "number"},
+          "p75": {"type": "number"},
+          "p90": {"type": "number"},
+          "p99": {"type": "number"},
+          "min_score": {"type": "number"},
+          "max_score": {"type": "number"},
+          "by_ticker": {"type": "array", "items": {"$ref": "#/components/schemas/BasketDistributionByTickerDTO"}}
+        }
+      },
+      "RuleConditionDTO": {
+        "type": "object",
+        "required": ["metric", "op", "value"],
+        "properties": {
+          "metric": {"type": "string", "enum": ["score.ema", "score.raw", "lifecycle", "lifecycle_change", "modules"]},
+          "op": {"type": "string", "enum": [">=", ">", "<=", "<", "==", "!=", "in", "not_in", "contains"]},
+          "value": {}
+        }
+      },
+      "RuleDSLDTO": {
+        "type": "object",
+        "required": ["when", "then"],
+        "properties": {
+          "when": {"type": "array", "items": {"$ref": "#/components/schemas/RuleConditionDTO"}, "minItems": 1, "maxItems": 20},
+          "then": {"type": "string", "enum": ["push", "log", "silent"], "default": "push"}
+        }
+      },
+      "AlertRuleCreateDTO": {
+        "type": "object",
+        "required": ["name", "dsl"],
+        "properties": {
+          "name": {"type": "string", "minLength": 1, "maxLength": 64},
+          "dsl": {"$ref": "#/components/schemas/RuleDSLDTO"},
+          "channels": {"type": "array", "items": {"type": "string"}, "default": ["email"]}
+        }
+      },
+      "AlertRuleUpdateDTO": {
+        "type": "object",
+        "properties": {
+          "name": {"type": ["string", "null"], "minLength": 1, "maxLength": 64},
+          "dsl": {"oneOf": [{"$ref": "#/components/schemas/RuleDSLDTO"}, {"type": "null"}]},
+          "channels": {"type": ["array", "null"], "items": {"type": "string"}},
+          "is_active": {"type": ["boolean", "null"]}
+        }
+      },
+      "AlertRuleDTO": {
+        "type": "object",
+        "required": ["id", "user_id", "name", "dsl", "channels", "is_active", "created_at", "updated_at"],
+        "properties": {
+          "id": {"type": "integer"},
+          "user_id": {"type": "string", "format": "uuid"},
+          "name": {"type": "string"},
+          "dsl": {"$ref": "#/components/schemas/RuleDSLDTO"},
+          "channels": {"type": "array", "items": {"type": "string"}},
+          "is_active": {"type": "boolean"},
+          "created_at": {"type": "string", "format": "date-time"},
+          "updated_at": {"type": "string", "format": "date-time"}
+        }
+      },
+      "AlertRuleEvalRequestDTO": {
+        "type": "object",
+        "required": ["tickers"],
+        "properties": {
+          "tickers": {"type": "array", "items": {"type": "string"}, "minItems": 1, "maxItems": 200},
+          "as_of": {"type": ["string", "null"], "format": "date"},
+          "persist": {"type": "boolean", "default": false, "description": "是否落 alert_event 记录(默认仅 dry-run)"}
+        }
+      },
+      "ConditionEvalDTO": {
+        "type": "object",
+        "required": ["metric", "op", "expected", "actual", "passed", "rationale"],
+        "properties": {
+          "metric": {"type": "string"},
+          "op": {"type": "string"},
+          "expected": {},
+          "actual": {},
+          "passed": {"type": "boolean"},
+          "rationale": {"type": "string"}
+        }
+      },
+      "AlertRuleEvalResultDTO": {
+        "type": "object",
+        "required": ["ticker", "trade_date", "rule_id", "triggered", "ema_score", "raw_score", "lifecycle", "condition_evals", "rationale", "event_id"],
+        "properties": {
+          "ticker": {"type": "string"},
+          "trade_date": {"type": "string", "format": "date"},
+          "rule_id": {"type": ["integer", "null"]},
+          "triggered": {"type": "boolean"},
+          "ema_score": {"type": ["number", "null"]},
+          "raw_score": {"type": ["number", "null"]},
+          "lifecycle": {"type": "string"},
+          "condition_evals": {"type": "array", "items": {"$ref": "#/components/schemas/ConditionEvalDTO"}},
+          "rationale": {"type": "string"},
+          "event_id": {"type": ["integer", "null"]}
+        }
+      },
+      "AlertRuleEvalSummaryDTO": {
+        "type": "object",
+        "required": ["rule_id", "as_of", "requested", "evaluated", "triggered", "no_data", "results", "warning"],
+        "properties": {
+          "rule_id": {"type": "integer"},
+          "as_of": {"type": "string", "format": "date"},
+          "requested": {"type": "integer"},
+          "evaluated": {"type": "integer"},
+          "triggered": {"type": "integer"},
+          "no_data": {"type": "integer"},
+          "results": {"type": "array", "items": {"$ref": "#/components/schemas/AlertRuleEvalResultDTO"}},
+          "warning": {"type": ["string", "null"]}
+        }
+      },
+      "ThreatScoreDTO": {
+        "type": "object",
+        "required": ["ticker", "trade_date", "total", "ema", "signal_lifecycle", "module_options", "module_short", "module_divergence", "module_insider", "modules_active", "consecutive_days_red", "data_warmup"],
+        "properties": {
+          "ticker": {"type": "string"},
+          "trade_date": {"type": "string", "format": "date"},
+          "total": {"type": "number", "minimum": 0, "maximum": 100, "description": "原始加权(非 EMA)"},
+          "ema": {"type": "number", "minimum": 0, "maximum": 100, "description": "EMA 平滑(半衰期 2 日)"},
+          "signal_lifecycle": {"type": "string", "enum": ["init", "red", "yellow", "gray", "green"]},
+          "module_options": {"type": "number"},
+          "module_short": {"type": "number"},
+          "module_divergence": {"type": "number"},
+          "module_insider": {"type": "number"},
+          "modules_active": {"type": "array", "items": {"type": "string"}},
+          "nl_summary": {"type": ["string", "null"]},
+          "consecutive_days_red": {"type": "integer", "minimum": 0},
+          "data_warmup": {"type": "boolean"}
+        }
+      },
+      "OptionsAnomalyDTO": {
+        "type": "object",
+        "required": ["trade_date", "symbol", "contract", "dte", "oi_increase_pct", "volume_oi_ratio", "notional", "is_top10_notional", "has_known_catalyst"],
+        "properties": {
+          "trade_date": {"type": "string", "format": "date"},
+          "symbol": {"type": "string"},
+          "contract": {"type": "string"},
+          "dte": {"type": "integer"},
+          "oi_increase_pct": {"type": "number"},
+          "volume_oi_ratio": {"type": "number"},
+          "notional": {"type": "number"},
+          "is_top10_notional": {"type": "boolean"},
+          "has_known_catalyst": {"type": "boolean"},
+          "catalyst_note": {"type": ["string", "null"]}
+        }
+      },
+      "ShortIcebergDTO": {
+        "type": "object",
+        "required": ["trade_date", "symbol", "short_ratio", "ats_short_pct", "z_score_60d", "data_warmup"],
+        "properties": {
+          "trade_date": {"type": "string", "format": "date"},
+          "symbol": {"type": "string"},
+          "short_ratio": {"type": "number"},
+          "ats_short_pct": {"type": ["number", "null"]},
+          "z_score_60d": {"type": ["number", "null"]},
+          "data_warmup": {"type": "boolean"}
+        }
+      },
+      "DivergenceDTO": {
+        "type": "object",
+        "required": ["trade_date", "symbol", "p_price", "p_short", "state"],
+        "properties": {
+          "trade_date": {"type": "string", "format": "date"},
+          "symbol": {"type": "string"},
+          "p_price": {"type": "number"},
+          "p_short": {"type": "number"},
+          "state": {"type": "string", "enum": ["none", "rising", "confirmed"]}
+        }
+      },
+      "UltimateAlertDTO": {
+        "type": "object",
+        "required": ["triggered_at", "trade_date", "symbol", "threat_score", "raw_score", "ema_score", "modules_active", "regime", "consecutive_days"],
+        "properties": {
+          "triggered_at": {"type": "string", "format": "date-time", "description": "去重 key"},
+          "trade_date": {"type": "string", "format": "date"},
+          "symbol": {"type": "string"},
+          "threat_score": {"type": "number"},
+          "raw_score": {"type": "number"},
+          "ema_score": {"type": "number"},
+          "modules_active": {"type": "array", "items": {"type": "string"}},
+          "regime": {"type": "string", "enum": ["normal", "panic"]},
+          "consecutive_days": {"type": "integer"}
+        }
+      },
+      "RegimeDTO": {
+        "type": "object",
+        "required": ["trade_date", "regime", "threshold_red", "banner_text"],
+        "properties": {
+          "trade_date": {"type": "string", "format": "date"},
+          "regime": {"type": "string", "enum": ["normal", "panic"]},
+          "vix": {"type": ["number", "null"]},
+          "spx_vs_ma20": {"type": ["number", "null"]},
+          "threshold_red": {"type": "integer", "description": "panic=80, normal=70"},
+          "banner_text": {"type": "string"}
+        }
+      }
+    },
+    "securitySchemes": {
+      "X-User-Id": {
+        "type": "apiKey",
+        "in": "header",
+        "name": "X-User-Id",
+        "description": "M4 占位鉴权(M5 BD-075 替换为 JWT)"
+      },
+      "BearerAuth": {
+        "type": "http",
+        "scheme": "bearer",
+        "bearerFormat": "JWT",
+        "description": "M5 BD-075 落地后启用"
+      }
+    }
+  }
+}

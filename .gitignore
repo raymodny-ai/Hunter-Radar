@@ -1,0 +1,40 @@
+# 顶层 .gitignore — Hunter Radar 项目上传到 GitHub
+# 此文件覆盖整个工作区(Hunter Radar 顶层),递归应用到所有子目录
+
+# 排除 sandbox 测试数据(任意层级)
+**/data/
+
+# Python
+.venv/
+__pycache__/
+*.pyc
+*.pyo
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+htmlcov/
+.coverage
+.env
+.env.local
+
+# 前端
+node_modules/
+dist/
+.pnpm-store/
+*.local
+.vite/
+
+# IDE
+.idea/
+.vscode/
+.DS_Store
+
+# 数据
+*.db
+*.sqlite3
+*.log
+
+# 临时测试输出
+backend/scripts/m*t*_test_output*.log
+backend/scripts/m*t*_output*.log
+backend/scripts/m8t1_v*_run.log

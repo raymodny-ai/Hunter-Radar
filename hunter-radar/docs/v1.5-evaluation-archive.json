@@ -1,0 +1,185 @@
+{
+  "generated_at_iso": "2026-06-17T19:29:12.297441+00:00",
+  "online_ready_version": "V1.5.4",
+  "total_passed": 1277,
+  "total_expected": 1277,
+  "m_stages": {
+    "M5": {
+      "passed": 116,
+      "expected": 116,
+      "v_version": "V1.4"
+    },
+    "M6": {
+      "passed": 194,
+      "expected": 194,
+      "v_version": "V1.4"
+    },
+    "M7": {
+      "passed": 213,
+      "expected": 213,
+      "v_version": "V1.4.1"
+    },
+    "M8": {
+      "passed": 79,
+      "expected": 79,
+      "v_version": "V1.4"
+    },
+    "M9": {
+      "passed": 150,
+      "expected": 150,
+      "v_version": "V1.5"
+    },
+    "M10": {
+      "passed": 200,
+      "expected": 200,
+      "v_version": "V1.5.2"
+    },
+    "M11": {
+      "passed": 150,
+      "expected": 150,
+      "v_version": "V1.5.3"
+    },
+    "M12": {
+      "passed": 75,
+      "expected": 75,
+      "v_version": "V1.5.4"
+    },
+    "M15": {
+      "passed": 100,
+      "expected": 100,
+      "v_version": "V1.5.7"
+    }
+  },
+  "candidates_by_v": {
+    "V1.5.3": [
+      {
+        "id": "C-1",
+        "title": "reviewer_cli 物理位置(独立目录)",
+        "relay": "V1.5.6 m14t1",
+        "status": "COMPLETE",
+        "verifier": "m14t1_test_reviewer_cli_isolated_dir"
+      },
+      {
+        "id": "C-2",
+        "title": "Role 扩展预留 super_admin",
+        "relay": "V1.5.4 m12t1",
+        "status": "COMPLETE",
+        "verifier": "m12t1_test_super_admin_role"
+      },
+      {
+        "id": "C-3",
+        "title": "OpenAPI freeze 自动化",
+        "relay": "V1.5.7 m15t1",
+        "status": "COMPLETE",
+        "verifier": "m15t1_test_freeze_automation"
+      },
+      {
+        "id": "C-4",
+        "title": "m7t2_sign_goldset.py 物理删除",
+        "relay": "V1.5.4 m12t2",
+        "status": "COMPLETE",
+        "verifier": "m12t2_test_m7t2_deletion"
+      },
+      {
+        "id": "C-5",
+        "title": "OpenAPI 端点评审字段标注",
+        "relay": "V1.5.4 m12t3",
+        "status": "COMPLETE",
+        "verifier": "m12t3_test_openapi_endpoint_review"
+      },
+      {
+        "id": "C-6",
+        "title": "静态分析 harness",
+        "relay": "V1.5.7 m15t2",
+        "status": "COMPLETE",
+        "verifier": "m15t2_test_self_test_harness"
+      }
+    ],
+    "V1.5.4": [],
+    "V1.5.5": [
+      {
+        "id": "E-1",
+        "title": "V1.5.5 production P0 修复",
+        "relay": "V1.5.5 m13t1",
+        "status": "COMPLETE",
+        "verifier": "m13t1_test_p0_fixes"
+      }
+    ],
+    "V1.5.6": [
+      {
+        "id": "C-1-ext",
+        "title": "reviewer_cli 独立目录(跨版本重新记录)",
+        "relay": "V1.5.6 m14t1",
+        "status": "COMPLETE",
+        "verifier": "m14t1_test_reviewer_cli_isolated_dir"
+      }
+    ],
+    "V1.5.7": [
+      {
+        "id": "C-3-ext",
+        "title": "OpenAPI freeze 自动化(跨版本重新记录)",
+        "relay": "V1.5.7 m15t1",
+        "status": "COMPLETE",
+        "verifier": "m15t1_test_freeze_automation"
+      },
+      {
+        "id": "C-6-ext",
+        "title": "静态分析 harness(跨版本重新记录)",
+        "relay": "V1.5.7 m15t2",
+        "status": "COMPLETE",
+        "verifier": "m15t2_test_self_test_harness"
+      },
+      {
+        "id": "E-2",
+        "title": "V1.5.7 handoff 收尾报告",
+        "relay": "V1.5.7 m15t3",
+        "status": "COMPLETE",
+        "verifier": "m15t3_test_v157_handoff"
+      },
+      {
+        "id": "E-3",
+        "title": "CI 集成(ci.yml + pre_commit.py)",
+        "relay": "V1.5.7 m15t4",
+        "status": "COMPLETE",
+        "verifier": "m15t4_test_ci_integration"
+      }
+    ],
+    "V1.5.8": [
+      {
+        "id": "E-4",
+        "title": "V1.5 评审未通过项归档工具",
+        "relay": "V1.5.8 m16t1",
+        "status": "COMPLETE",
+        "verifier": "m16t1_test_eval_archive"
+      },
+      {
+        "id": "E-5",
+        "title": "评审归档扩展(本工具跨版本)",
+        "relay": "V1.5.8 m16t2",
+        "status": "COMPLETE",
+        "verifier": "m16t2_test_eval_archive_extended"
+      },
+      {
+        "id": "E-6",
+        "title": "self_test_harness 增强(并行/多格式/fail-fast)",
+        "relay": "V1.5.8 m16t3",
+        "status": "COMPLETE",
+        "verifier": "m16t3_test_harness_enhanced"
+      },
+      {
+        "id": "E-7",
+        "title": "freeze_check diff 增量模式",
+        "relay": "V1.5.8 m16t4",
+        "status": "COMPLETE",
+        "verifier": "m16t4_test_freeze_diff"
+      }
+    ]
+  },
+  "status_counts": {
+    "COMPLETE": 16,
+    "PENDING": 0,
+    "CANCELLED": 0
+  },
+  "total_candidates": 16,
+  "failures_from_m8t1": []
+}

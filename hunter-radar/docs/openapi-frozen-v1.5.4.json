@@ -1,0 +1,113 @@
+{
+  "freeze_version": "v1.5.4",
+  "freeze_date": "2026-06-15",
+  "relay_period": "m12",
+  "status": "ONLINE-READY",
+  "endpoints_total": 56,
+  "endpoints_unchanged_from_v153": 56,
+  "new_endpoints_v154": 0,
+  "removed_endpoints_v154": 0,
+  "modified_endpoint_schemas_v154": 0,
+  "modified_endpoint_auth_v154": 1,
+  "completed_optimization_items": ["C-2", "C-4", "C-5"],
+  "pending_optimization_items": ["C-1", "C-3", "C-6"],
+  "fetch_source_values": [
+    "sec_httpx",
+    "yfinance",
+    "user_provided_price",
+    "posthog",
+    "plausible",
+    "sandbox_stub",
+    "sandbox_stub_v15_prep",
+    "sandbox_skip_admin"
+  ],
+  "auth_modes": {
+    "admin": ["prod_admin_jwt", "prod_admin_apikey", "sandbox_skip_admin"],
+    "super_admin": ["prod_super_admin_jwt", "prod_super_admin_apikey", "sandbox_skip_super_admin"]
+  },
+  "super_admin_endpoints": [
+    "/api/v1/admin/webhook/replay"
+  ],
+  "endpoint_review_meta": [
+    {
+      "endpoint": "/api/v1/admin/etl/run",
+      "review_status": "passes_v153",
+      "owner": "platform-team",
+      "last_reviewed": "2026-06-15",
+      "touched_in_v153": true,
+      "touched_in_v153_note": "m11t2 IP 校验合并",
+      "m12t1_super_admin": false,
+      "m12t3_high_risk": false
+    },
+    {
+      "endpoint": "/api/v1/admin/backtest/run",
+      "review_status": "passes_v153",
+      "owner": "platform-team",
+      "last_reviewed": "2026-06-15",
+      "touched_in_v153": true,
+      "touched_in_v153_note": "m11t2 IP 校验合并",
+      "m12t1_super_admin": false,
+      "m12t3_high_risk": false
+    },
+    {
+      "endpoint": "/api/v1/admin/backtest/result",
+      "review_status": "passes_v153",
+      "owner": "platform-team",
+      "last_reviewed": "2026-06-15",
+      "touched_in_v153": true,
+      "touched_in_v153_note": "m11t2 IP 校验合并",
+      "m12t1_super_admin": false,
+      "m12t3_high_risk": false
+    },
+    {
+      "endpoint": "/api/v1/admin/webhook/replay",
+      "review_status": "passes_v154",
+      "owner": "platform-team",
+      "last_reviewed": "2026-06-15",
+      "touched_in_v153": false,
+      "touched_in_v153_note": null,
+      "m12t1_super_admin": true,
+      "m12t1_super_admin_note": "require_super_admin_role (m12t1 升级)",
+      "m12t3_high_risk": true,
+      "m12t3_high_risk_note": "webhook 重放 = 计费事件"
+    },
+    {
+      "catch_all": true,
+      "description": "其他 52 端点沿用 V1.5.3 review",
+      "review_status": "passes_v153",
+      "owner": "platform-team",
+      "last_reviewed": "2026-06-15",
+      "touched_in_v153": false,
+      "touched_in_v153_note": null,
+      "m12t1_super_admin": false,
+      "m12t3_high_risk": false
+    }
+  ],
+  "v154_relay_tasks": {
+    "m12t1": {
+      "status": "COMPLETE",
+      "topic": "super_admin role 扩展",
+      "tests": 25,
+      "script": "m12t1_test_super_admin_role.py"
+    },
+    "m12t2": {
+      "status": "COMPLETE",
+      "topic": "m7t2_sign_goldset.py 物理删除",
+      "tests": 25,
+      "script": "m12t2_test_m7t2_deletion.py"
+    },
+    "m12t3": {
+      "status": "COMPLETE",
+      "topic": "OpenAPI 端点评审字段标注",
+      "tests": 25,
+      "script": "m12t3_test_openapi_endpoint_review.py"
+    }
+  },
+  "v154_total_scripts": 3,
+  "v154_total_testpoints": 75,
+  "freeze_unlocks": {
+    "next_version": "v1.5.5",
+    "next_relay_period": "m13+",
+    "next_action": "新建 openapi-frozen-v1.5.5.md + .json + 更新 m8t1 M13_SCRIPTS"
+  }
+}

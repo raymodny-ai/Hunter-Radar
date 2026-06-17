@@ -1,0 +1,29 @@
+# 排除虚拟环境与缓存
+.venv/
+__pycache__/
+*.pyc
+*.pyo
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+htmlcov/
+.coverage
+.env
+.env.local
+
+# 前端
+node_modules/
+dist/
+.pnpm-store/
+*.local
+.vite/
+
+# IDE
+.idea/
+.vscode/
+.DS_Store
+
+# 数据
+*.db
+*.sqlite3
+*.log

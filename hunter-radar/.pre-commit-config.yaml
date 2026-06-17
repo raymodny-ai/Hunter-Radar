@@ -1,0 +1,38 @@
+# V1.5.7 接力期 m15t4 — pre-commit 配置(可选用 pre-commit.com 框架)
+# 关联:
+# - scripts/pre_commit.py(本仓库自带简化版,无需 pre-commit.com 框架)
+# - .github/workflows/ci.yml(CI 上跑 freeze_check + self_test_harness + m8t1)
+# - docs/freeze-check-runbook.md(C-3 工具操作手册)
+#
+# V1.5.7 接力期 m15t4 决策:不用 pre-commit.com 框架
+# 原因:本仓库已有 scripts/pre_commit.py install 命令,
+#       可直接生成 .git/hooks/pre-commit(简化版,只调 freeze_check --skip-m8t1)
+# 更复杂的 hook(lint / format / type-check)可在本文件扩展。
+#
+# 如果将来要切换到 pre-commit.com 框架,取消下面注释并 `pip install pre-commit`。
+
+# repos:
+#   - repo: local
+#     hooks:
+#       - id: freeze_check
+#         name: V1.5.7 freeze_check
+#         entry: py -B -m scripts.pre_commit --skip-m8t1
+#         language: system
+#         pass_filenames: false
+#         always_run: true
+#         stages: [commit]
+#       - id: self_test_harness
+#         name: V1.5.7 self_test_harness (m15t1 only, fast)
+#         entry: py -B -m scripts.self_test_harness --pattern m15t1 --quiet
+#         language: system
+#         pass_filenames: false
+#         always_run: false  # 不自动跑,改用 CI
+#         stages: [manual]
+
+# 安装方式(简化版):
+#   py -B -m scripts.pre_commit install
+#
+# 手动跑(调试用):
+#   py -B -m scripts.pre_commit --skip-m8t1
+#   py -B -m scripts.pre_commit --no-skip-m8t1   # 跑全量 m8t1,慢
+#   py -B -m scripts.pre_commit --strict

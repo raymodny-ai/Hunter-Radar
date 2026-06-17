@@ -1,0 +1,340 @@
+{
+  "openapi": "3.0.3",
+  "info": {
+    "title": "Hunter Radar V1.4.1 OpenAPI Freeze",
+    "version": "1.4.1",
+    "description": "M5 接力期补 freeze:在 v1.4 基础上新增 push(m5t4) / data-status(m5t6) / auth-quota(m5t8) 6 端点;生产环境务必用 `uv run` 覆盖一次。"
+  },
+  "tags": [
+    {
+      "name": "alerts"
+    },
+    {
+      "name": "basket"
+    },
+    {
+      "name": "data_status"
+    },
+    {
+      "name": "eight_k"
+    },
+    {
+      "name": "feature_flags"
+    },
+    {
+      "name": "health"
+    },
+    {
+      "name": "push"
+    },
+    {
+      "name": "quota"
+    },
+    {
+      "name": "regime"
+    },
+    {
+      "name": "screener"
+    },
+    {
+      "name": "subscriptions"
+    },
+    {
+      "name": "symbols"
+    }
+  ],
+  "paths": {
+    "/api/v1/alert-rules": {
+      "post": {
+        "summary": "",
+        "response_model": "AlertRuleDTO",
+        "source": "app/api/alerts.py:create_alert_rule"
+      },
+      "get": {
+        "summary": "",
+        "response_model": "list[AlertRuleDTO]",
+        "source": "app/api/alerts.py:list_alert_rules"
+      }
+    },
+    "/api/v1/alert-rules/{rule_id}": {
+      "get": {
+        "summary": "",
+        "response_model": "AlertRuleDTO",
+        "source": "app/api/alerts.py:get_alert_rule"
+      },
+      "put": {
+        "summary": "",
+        "response_model": "AlertRuleDTO",
+        "source": "app/api/alerts.py:update_alert_rule"
+      },
+      "delete": {
+        "summary": "",
+        "response_model": "unknown",
+        "source": "app/api/alerts.py:delete_alert_rule"
+      }
+    },
+    "/api/v1/alert-rules/{rule_id}/eval": {
+      "post": {
+        "summary": "",
+        "response_model": "AlertRuleEvalSummaryDTO",
+        "source": "app/api/alerts.py:evaluate_alert_rule"
+      }
+    },
+    "/api/v1/alerts/rules": {
+      "post": {
+        "summary": "",
+        "response_model": "AlertRuleDTO",
+        "source": "app/api/alerts.py:create_alert_rule_legacy"
+      }
+    },
+    "/api/v1/baskets": {
+      "post": {
+        "summary": "",
+        "response_model": "BasketDTO",
+        "source": "app/api/basket.py:create_basket"
+      },
+      "get": {
+        "summary": "",
+        "response_model": "list[BasketDTO]",
+        "source": "app/api/basket.py:list_baskets"
+      }
+    },
+    "/api/v1/baskets/{basket_id}": {
+      "get": {
+        "summary": "",
+        "response_model": "BasketDTO",
+        "source": "app/api/basket.py:get_basket"
+      },
+      "put": {
+        "summary": "",
+        "response_model": "BasketDTO",
+        "source": "app/api/basket.py:update_basket"
+      },
+      "delete": {
+        "summary": "",
+        "response_model": "unknown",
+        "source": "app/api/basket.py:delete_basket"
+      }
+    },
+    "/api/v1/baskets/{basket_id}/members": {
+      "post": {
+        "summary": "",
+        "response_model": "dict",
+        "source": "app/api/basket.py:add_members"
+      },
+      "get": {
+        "summary": "",
+        "response_model": "list[BasketMemberDTO]",
+        "source": "app/api/basket.py:list_members"
+      }
+    },
+    "/api/v1/baskets/{basket_id}/members/{ticker}": {
+      "delete": {
+        "summary": "",
+        "response_model": "unknown",
+        "source": "app/api/basket.py:remove_member"
+      }
+    },
+    "/api/v1/baskets/{basket_id}/distribution": {
+      "get": {
+        "summary": "",
+        "response_model": "BasketDistributionDTO",
+        "source": "app/api/basket.py:get_basket_distribution"
+      }
+    },
+    "/api/v1/data-status": {
+      "get": {
+        "summary": "全局数据状态聚合:db / redis / data_warmup / is_stale。",
+        "response_model": "dict",
+        "source": "app/api/data_status.py:get_data_status"
+      }
+    },
+    "/api/v1/events/8k": {
+      "get": {
+        "summary": "返最近 N 天 8-K Item 8.01 事件流(全市场)。\n\ncategory=None 返全部;category 指定时仅返该类事件。",
+        "response_model": "dict",
+        "source": "app/api/eight_k.py:get_recent_8k"
+      }
+    },
+    "/api/v1/symbols/{ticker}/8k": {
+      "get": {
+        "summary": "返某 ticker 最近 N 天 8-K Item 8.01 事件。",
+        "response_model": "dict",
+        "source": "app/api/eight_k.py:get_ticker_8k"
+      }
+    },
+    "/api/v1/events/8k/classify": {
+      "post": {
+        "summary": "给定 8-K body 文本,返 category 判定(便于自测 + 调试)。",
+        "response_model": "dict",
+        "source": "app/api/eight_k.py:post_classify"
+      }
+    },
+    "/api/v1/feature-flags": {
+      "get": {
+        "summary": "返 {flag_key: {enabled, reason}}。",
+        "response_model": "dict",
+        "source": "app/api/feature_flags.py:get_all_flags"
+      }
+    },
+    "/api/v1/feature-flags/{flag_key}": {
+      "get": {
+        "summary": "返 {flag_key, enabled, reason}。",
+        "response_model": "dict",
+        "source": "app/api/feature_flags.py:get_flag"
+      }
+    },
+    "/health": {
+      "get": {
+        "summary": "详细健康状态(供运维与监控)。",
+        "response_model": "dict",
+        "source": "app/api/health.py:health"
+      }
+    },
+    "/": {
+      "get": {
+        "summary": "",
+        "response_model": "dict",
+        "source": "app/api/health.py:root"
+      }
+    },
+    "/api/v1/push/vapid-public-key": {
+      "get": {
+        "summary": "",
+        "response_model": "VAPIDPublicKeyDTO",
+        "source": "app/api/push.py:get_vapid_public_key"
+      }
+    },
+    "/api/v1/push/subscriptions": {
+      "post": {
+        "summary": "",
+        "response_model": "PushSubscriptionDTO",
+        "source": "app/api/push.py:upsert_push_subscription"
+      },
+      "get": {
+        "summary": "",
+        "response_model": "list[PushSubscriptionDTO]",
+        "source": "app/api/push.py:list_push_subscriptions"
+      }
+    },
+    "/api/v1/push/subscriptions/{sub_id}": {
+      "delete": {
+        "summary": "",
+        "response_model": "unknown",
+        "source": "app/api/push.py:delete_push_subscription"
+      }
+    },
+    "/api/v1/auth/quota": {
+      "get": {
+        "summary": "返回当前 JWT/X-User-Id 对应用户的当日 quota 状态。\n\n字段与前端 QuotaDTO / QuotaState 保持一致,稳定不破坏。",
+        "response_model": "dict",
+        "source": "app/api/quota.py:get_my_quota"
+      }
+    },
+    "/api/v1/regime": {
+      "get": {
+        "summary": "VIX > 30 或 SPX < MA20 → panic,红灯阈值上调到 80。",
+        "response_model": "RegimeDTO",
+        "source": "app/api/regime.py:get_regime"
+      }
+    },
+    "/api/v1/screener": {
+      "get": {
+        "summary": "返回 Top N 危险标的。\n\n数据源：threat_score_daily（由 etl/load_threat_score 落库）。\nM4 接力期：12h Redis TTL 缓存（key 含 top + symbol_type + trade_date）。",
+        "response_model": "ScreenerDTO",
+        "source": "app/api/screener.py:get_screener"
+      }
+    },
+    "/api/v1/subscriptions/checkout": {
+      "post": {
+        "summary": "生成 Stripe Checkout Session URL。\n\n生产:调 stripe.checkout.Session.create(...).\n沙箱:返 sandbox-complete 链接,前端可直接点击模拟成功。",
+        "response_model": "dict",
+        "source": "app/api/subscriptions.py:post_checkout"
+      }
+    },
+    "/api/v1/subscriptions/me": {
+      "get": {
+        "summary": "200 + 订阅状态;无订阅返 200 + tier=free + status=none(便于前端无订阅判断)。",
+        "response_model": "dict",
+        "source": "app/api/subscriptions.py:get_me"
+      }
+    },
+    "/api/v1/subscriptions/cancel": {
+      "post": {
+        "summary": "取消订阅;无订阅返 404。",
+        "response_model": "dict",
+        "source": "app/api/subscriptions.py:post_cancel"
+      }
+    },
+    "/api/v1/subscriptions/webhook": {
+      "post": {
+        "summary": "接收 Stripe webhook event。\n\n签名校验逻辑(M7-t6):\n- settings.stripe_webhook_secret 未设 → 沙箱模式:返 200 + signature_skipped=true\n  + signature_mode=sandbox_skip + warning(显式标注,绝不 mock 200 伪装成功)\n- secret 已设 + stripe SDK 不可用 → 503 signature_check_unavailable(不伪装成功)\n- secret 已设 + SDK 可用 → stripe.Webhook.construct_event(payload, sig, secret)\n- 签名错误 → 400 Invalid signature(由 HTTPException 抛)\n- payload 非 JSON → 400 Invalid payload",
+        "response_model": "dict",
+        "source": "app/api/subscriptions.py:post_webhook"
+      }
+    },
+    "/api/v1/subscriptions/sandbox-complete": {
+      "get": {
+        "summary": "沙箱专用:GET 方式模拟 Stripe Checkout 成功重定向。\n\n生产环境由 Stripe 异步 webhook 触发,本端点仅用于前端自测与沙箱演练。",
+        "response_model": "dict",
+        "source": "app/api/subscriptions.py:get_sandbox_complete"
+      }
+    },
+    "/api/v1/subscriptions/plans": {
+      "get": {
+        "summary": "公开端点:无需 JWT,前端 /subscribe 页面初始化时拉取。",
+        "response_model": "dict",
+        "source": "app/api/subscriptions.py:get_plans"
+      }
+    },
+    "/api/v1/symbols/lookup": {
+      "get": {
+        "summary": "输入「QQQ」返回 `{ticker, name, type, exchange}`。",
+        "response_model": "list[dict]",
+        "source": "app/api/symbols.py:lookup_symbols"
+      }
+    },
+    "/api/v1/symbols/{ticker}/threat": {
+      "get": {
+        "summary": "返回最新一日的 Threat Score（从 threat_score_daily 表读）。\n\nM4 接力期：12h Redis TTL 缓存（key 含 ticker）。",
+        "response_model": "ThreatScoreDTO",
+        "source": "app/api/symbols.py:get_threat_score"
+      }
+    },
+    "/api/v1/symbols/{ticker}/options-anomaly": {
+      "get": {
+        "summary": "读 option_anomaly 表。M1 末已接 ETL(etl/load_options_chain.compute_option_anomaly)。",
+        "response_model": "list[OptionsAnomalyDTO]",
+        "source": "app/api/symbols.py:get_options_anomaly"
+      }
+    },
+    "/api/v1/symbols/{ticker}/short-iceberg": {
+      "get": {
+        "summary": "读 short_ratio_daily(BD-030/031/032)。M1 末落库层未跑时,前端会拿到空数组。",
+        "response_model": "list[ShortIcebergDTO]",
+        "source": "app/api/symbols.py:get_short_iceberg"
+      }
+    },
+    "/api/v1/symbols/{ticker}/divergence": {
+      "get": {
+        "summary": "读 divergence_window 表(BD-040/041/042 落库产物)。",
+        "response_model": "list[DivergenceDTO]",
+        "source": "app/api/symbols.py:get_divergence"
+      }
+    },
+    "/api/v1/symbols/{ticker}/threat-history": {
+      "get": {
+        "summary": "读 threat_score_daily 近 N 日，输出 90 日轨迹（BD-066）。\n\nM4 接力期：12h Redis TTL 缓存（key 含 ticker + days）。",
+        "response_model": "list[dict]",
+        "source": "app/api/symbols.py:get_threat_history"
+      }
+    },
+    "/api/v1/symbols/{ticker}/ultimate-alert": {
+      "get": {
+        "summary": "读 ultimate_alert 表,返回该 ticker 最近一条触发的终极警报。\n\n- 404:无警报(前端 useUltimateAlert 视为 null,不报错)\n- 5xx:数据库/服务故障(透传)",
+        "response_model": "UltimateAlertDTO",
+        "source": "app/api/symbols.py:get_ultimate_alert"
+      }
+    }
+  }
+}
