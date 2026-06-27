@@ -67,6 +67,78 @@ class DivergenceDTO(BaseModel):
     state: Literal["none", "rising", "confirmed"]
 
 
+@router.get(
+    "/symbols/{ticker}/options-anomaly-v2",
+    summary="§3.1 V1.5.9 Options 异动增强(PCR + Gamma + OTM 刺客,纯 Redis 读取)",
+)
+async def get_options_anomaly_v2(
+    ticker: str,
+) -> dict:
+    """V1.5.9 Options 异动增强端点。
+
+    纯 Redis 读取(ETL 预热推入,端点不做 DB 回查)。
+    包含: PCR / Z-Score / OTM 刺客 / Gamma 聚集 / signal_strength。
+    Cache miss 时返回空数据(不触发慢查询)。
+    """
+    import json
+    from app.core.redis_client import redis_client
+
+    t = ticker.upper()
+    key = f"opt:{t}:{date.today().isoformat()}"
+    try:
+        raw = await redis_client.get(key)
+        if raw is not None:
+            return json.loads(raw)
+    except Exception:
+        pass
+    # Cache miss → 返回空(不回查 DB)
+    return {
+        "symbol": t,
+        "trade_date": date.today().isoformat(),
+        "pcr": None,
+        "pcr_z_score": None,
+        "pcr_extreme": False,
+        "otm_assassin_count": 0,
+        "gamma_clusters": [],
+        "signal_strength": "NORMAL",
+        "signal_modules": [],
+        "_cache": "miss",
+    }
+
+
+@router.get(
+    "/symbols/{ticker}/short-iceberg-v2",
+    summary="§3.2 V1.5.9 水位图增强(含 ATS fallback 数据)",
+)
+async def get_short_iceberg_v2(
+    ticker: str,
+    days: int = Query(default=20, ge=1, le=120),
+    session: AsyncSession = Depends(get_session),
+) -> dict:
+    """V1.5.9 水位图增强:合并主源 + ATS fallback 数据。"""
+    from app.services.ats_fallback import get_ats_series
+
+    t = ticker.upper()
+    # 原有水位图数据
+    original = await get_short_iceberg(t, days=days, session=session)
+    # ATS fallback 系列
+    ats_series = await get_ats_series(t, days=days, session=session)
+
+    return {
+        "symbol": t,
+        "series": [s.model_dump(mode="json") for s in original],
+        "ats_series": [
+            {
+                "trade_date": a.trade_date.isoformat(),
+                "ats_short_volume": a.ats_short_volume,
+                "source": a.source,
+                "is_fallback": a.is_fallback,
+            }
+            for a in ats_series
+        ],
+    }
+
+
 class UltimateAlertDTO(BaseModel):
     """终极警报 DTO(BD-064 / FE-031)。
 

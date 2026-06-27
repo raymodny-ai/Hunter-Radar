@@ -43,6 +43,7 @@ from app.services.threat_score import (
     compute_threat_score,
     consecutive_business_days_above,
     decide_lifecycle,
+    reallocate_weights,
 )
 from etl.load_short_volume import LoadResult
 
@@ -317,6 +318,57 @@ def _is_data_warmup(short_z: float | None, history: list[dict]) -> bool:
     return False
 
 
+async def _read_options_signals(
+    session: AsyncSession,
+    tickers: list[str],
+    trade_date: date,
+) -> dict[str, str]:
+    """读 V1.5.9 Options signal_strength(供动态权重重分配)。
+
+    优先读 Redis(opt:{ticker}:{date});miss 则查 option_pcr_daily 表;
+    全部 miss 则返回 NORMAL。
+    """
+    import json
+
+    signals: dict[str, str] = {}
+
+    # 1) 优先 Redis
+    try:
+        from app.core.redis_client import redis_client
+        for t in tickers:
+            key = f"opt:{t}:{trade_date.isoformat()}"
+            raw = await redis_client.get(key)
+            if raw is not None:
+                data = json.loads(raw)
+                signals[t] = data.get("signal_strength", "NORMAL")
+    except Exception:
+        pass
+
+    # 2) 未命中的 ticker 查 option_pcr_daily 表
+    missing = [t for t in tickers if t not in signals]
+    if missing:
+        try:
+            tbl = Symbol.__table__.metadata.tables.get("option_pcr_daily")
+            if tbl is not None:
+                sql = (
+                    select(tbl.c.symbol, tbl.c.signal_strength)
+                    .where(tbl.c.symbol.in_(set(missing)))
+                    .where(tbl.c.trade_date == trade_date)
+                )
+                rs = await session.execute(sql)
+                for row in rs.all():
+                    signals[row.symbol] = row.signal_strength or "NORMAL"
+        except Exception:
+            pass
+
+    # 3) 填充默认 NORMAL
+    for t in tickers:
+        if t not in signals:
+            signals[t] = "NORMAL"
+
+    return signals
+
+
 # ---- 入口 ----
 
 
@@ -377,6 +429,9 @@ async def compute_threat_scores(
 
         # 4) 算每 ticker
         payload: list[dict] = []
+        # 读 V1.5.9 Options signal_strength(供动态权重重分配)
+        options_signals = await _read_options_signals(session, target_tickers, trade_date)
+
         for sym in target_tickers:
             sym_type = ticker_type[sym]
             is_etf = sym_type == "etf"
@@ -395,7 +450,19 @@ async def compute_threat_scores(
                 )
                 weights = weights_default["stock"]
 
-            # 调 services 算 raw + EMA
+            # V1.5.9 动态权重重分配: Options HIGH → 权重提升至 0.40
+            opt_signal = options_signals.get(sym, "NORMAL")
+            if opt_signal == "HIGH":
+                signals = {"options": "HIGH", "short": "NORMAL", "divergence": "NORMAL"}
+                if not is_etf:
+                    signals["insider"] = "NORMAL"
+                weights = reallocate_weights(
+                    signals,
+                    base_weights=weights,
+                    symbol_type=sym_type,
+                )
+
+            # 调 services 算 raw + EMA(Min(Score,100) 已在 compute_threat_score 内)
             hist = history.get(sym, [])
             score = compute_threat_score(
                 module_options=mod_opts,

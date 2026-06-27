@@ -95,6 +95,20 @@ class Settings(BaseSettings):
     # OQ-02 EMA 平滑半衰期(交易日)
     ema_halflife_days: int = 2
 
+    # ---- V1.5.9 ATS Fallback ----
+    ats_fallback_enabled: bool = True
+    ats_fallback_consecutive_threshold: int = 3  # 连续 N 次 fallback 触发 WARNING
+    ats_cron_schedule_et: list[str] = ["18:00", "04:00"]  # 美东时间
+
+    # ---- V1.5.9 Options Anomaly V2 ----
+    options_cron_interval_min: int = 30  # 轮询间隔(分钟)
+    options_cron_rate_per_sec: float = 1.5  # 限流(标的/秒)
+    options_cron_dte_max: int = 7  # 仅拉 0-7 DTE
+    options_cache_ttl_seconds: int = 2400  # 40min(> 30min 轮询)
+    options_pcr_z_threshold: float = 2.0  # Z-Score 极值阈值(2σ)
+    options_dynamic_baseline_etf_multiplier: float = 3.0
+    options_dynamic_baseline_stock_multiplier: float = 5.0
+
     # ---- Backtest ----
     backtest_history_years: int = 2
     backtest_goldset_min_events: int = 30

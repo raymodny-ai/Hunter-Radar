@@ -33,6 +33,14 @@ function SymbolPage() {
     retry: 0,
   });
 
+  // V1.5.9: Options Anomaly V2(PCR + Gamma + OTM 刺客)
+  const optionsV2 = useQuery({
+    queryKey: ["options-v2", ticker],
+    queryFn: () => api.getOptionsAnomalyV2(ticker),
+    retry: 0,
+    staleTime: 1000 * 60 * 5,
+  });
+
   // M3 联锁:信号生命周期 / 90 日轨迹 / 终极警报 三个新 hooks
   const redThreshold = 70; // 与后端 settings.threat_red_threshold 同步
   const lifecycle = useSignalLifecycle(ticker, { threshold: redThreshold });
@@ -169,6 +177,73 @@ function SymbolPage() {
       </div>
 
       <ThreatHistoryChart data={history.data ?? []} threshold={redThreshold} />
+
+      {/* V1.5.9: Options Anomaly V2 指标卡片 */}
+      {optionsV2.data && optionsV2.data.signal_strength !== "LOW" && (
+        <div className="bg-slate-900 border border-slate-800 rounded-md p-6">
+          <h2 className="text-sm font-semibold text-slate-300 mb-4 flex items-center gap-2">
+            期权异动 V2
+            {optionsV2.data.signal_strength === "HIGH" && (
+              <span className="text-xs px-1.5 py-0.5 rounded border text-red-400 bg-red-950/30 border-red-800/50">
+                HIGH
+              </span>
+            )}
+            {optionsV2.data.signal_strength === "NORMAL" && (
+              <span className="text-xs px-1.5 py-0.5 rounded border text-slate-400 bg-slate-800 border-slate-700">
+                NORMAL
+              </span>
+            )}
+          </h2>
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
+            <div>
+              <div className="text-slate-500 text-xs mb-1">PCR</div>
+              <div className="font-mono font-bold text-slate-200">
+                {optionsV2.data.pcr.toFixed(2)}
+              </div>
+              {optionsV2.data.pcr_z_score !== null && (
+                <div className={`text-xs mt-0.5 ${optionsV2.data.pcr_extreme ? "text-red-400" : "text-slate-500"}`}>
+                  z={optionsV2.data.pcr_z_score.toFixed(2)}
+                  {optionsV2.data.pcr_extreme && " 极值"}
+                </div>
+              )}
+            </div>
+            <div>
+              <div className="text-slate-500 text-xs mb-1">Put / Call 成交量</div>
+              <div className="font-mono text-slate-300">
+                {optionsV2.data.pcr_total_put.toLocaleString()} / {optionsV2.data.pcr_total_call.toLocaleString()}
+              </div>
+            </div>
+            <div>
+              <div className="text-slate-500 text-xs mb-1">OTM 刺客合约</div>
+              <div className={`font-mono font-bold ${
+                optionsV2.data.otm_assassin_count >= 2 ? "text-red-400" : "text-slate-300"
+              }`}>
+                {optionsV2.data.otm_assassin_count}
+              </div>
+            </div>
+            <div>
+              <div className="text-slate-500 text-xs mb-1">Gamma 聚集</div>
+              <div className="font-mono text-slate-300">
+                {optionsV2.data.gamma_clusters.filter(g => g.is_cluster).length > 0 ? (
+                  <span className="text-amber-300">
+                    {optionsV2.data.gamma_clusters.filter(g => g.is_cluster).map(g => `$${g.strike.toFixed(0)}`).join(", ")}
+                  </span>
+                ) : (
+                  <span className="text-slate-500">无</span>
+                )}
+              </div>
+            </div>
+          </div>
+          {optionsV2.data.signal_modules.length > 0 && (
+            <div className="mt-3 text-xs text-slate-500">
+              触发模块: {optionsV2.data.signal_modules.join(" / ")}
+            </div>
+          )}
+          {optionsV2.data._cache === "miss" && (
+            <div className="mt-2 text-xs text-amber-500/60">缓存未命中,数据可能延迟</div>
+          )}
+        </div>
+      )}
 
       <div className="text-xs text-slate-500">
         数据来源:FINRA + SEC EDGAR + Yahoo Finance。统计异常现象,仅供参考。

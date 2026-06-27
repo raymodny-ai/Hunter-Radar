@@ -1,4 +1,4 @@
-"""M8-t1 V1.4 上线回归验证:M5 + M6 + M7 + M8 + M9 + M10 + M11 + M12 + M15 全量沙箱自测聚合 runner。
+"""M8-t1 V1.5.9 上线回归验证:M5 + M6 + M7 + M8 + M9 + M10 + M11 + M12 + M15 + M16 + M17 + M18 全量沙箱自测聚合 runner。
 
 V1.5.4 接力期 增量状态校验:
 - M5(11 脚本 / 122 测点) — 沿用 m7t1 验证
@@ -12,8 +12,9 @@ V1.5.4 接力期 增量状态校验:
 - M15(4 脚本 / 100 测点) — m15t1 (C-3 freeze 自动化) + m15t2 (C-6 self_test_harness) + m15t3 (V1.5.7 收尾) + m15t4 (CI 集成): V1.5.7 接力期
 - M16(4 脚本 / 100 测点) — m16t1 (评审归档工具) + m16t2 (评审归档扩展 V1.5.5~V1.5.8) + m16t3 (harness 增强 ThreadPoolExecutor + --output-format + --fail-fast) + m16t4 (freeze diff 增量模式): V1.5.8 接力期
 - M17(1 脚本 / 25 测点) — m17t1 (V1.5.8-handoff.md 收尾报告): V1.5.8 接力期 收尾
+- M18(3 脚本 / 75 测点) — m18t1 (ATS Fallback 全链路) + m18t2 (Options V2 全链路) + m18t3 (V1.5.9 handoff): V1.5.9 接力期
 
-总计 65 个脚本 / 1402+ 测点全过(V1.5.8 ONLINE-READY)。
+总计 68 个脚本 / 1477+ 测点全过(V1.5.9 ONLINE-READY)。
 
 V1.5.3 接力期 沿用状态(由 m11t6 静态分析 验证):
 - V1.5.3 接力期 m11 早期(5 脚本 / 125 测点),V1.5.3 接力期后补 m11t6 达到 6 脚本 / 150 测点
@@ -129,6 +130,13 @@ M16_SCRIPTS = [
 # M17(V1.5.8 接力期 收尾报告;1 脚本 / 25 测点)
 M17_SCRIPTS = [
     ("m17t1_test_v158_handoff.py", 25),
+]
+
+# M18(V1.5.9 接力期 ATS Fallback + Options V2 + handoff;3 脚本 / 75 测点)
+M18_SCRIPTS = [
+    ("m18t1_test_ats_scraper.py", 25),
+    ("m18t2_test_options_anomaly_v2.py", 25),
+    ("m18t3_test_v159_handoff.py", 25),
 ]
 
 # M9(V1.5 接力期;逐个添加,跳过 m9t1 自身作为聚合型)
@@ -264,9 +272,15 @@ def main() -> int:
     )
     failures += f11
 
+    # 12. M18 接力期 3 脚本回归(V1.5.9 ATS Fallback + Options V2 + handoff)
+    f12, p12, tot12 = run_group(
+        "M8-t1 / M18 接力期自测回归(3 脚本 / 75 测点)", M18_SCRIPTS
+    )
+    failures += f12
+
     # ---- 总览 ---------------------------------------------------------------
-    total_passed = p1 + p2 + p3 + p4 + p5 + p6 + p7 + p8 + p9 + p10 + p11
-    total_expected = tot1 + tot2 + tot3 + tot4 + tot5 + tot6 + tot7 + tot8 + tot9 + tot10 + tot11
+    total_passed = p1 + p2 + p3 + p4 + p5 + p6 + p7 + p8 + p9 + p10 + p11 + p12
+    total_expected = tot1 + tot2 + tot3 + tot4 + tot5 + tot6 + tot7 + tot8 + tot9 + tot10 + tot11 + tot12
     ok = total_passed == total_expected and failures == 0
     if not t(
         "m8t1_aggregate_total",
@@ -280,9 +294,9 @@ def main() -> int:
         # V1.5.4 ONLINE-READY 主 marker + V1.5.3 沿用兼容 marker(m11t6 静态分析)
         # V1.5.3 接力期 沿用: M11({p7}/125) 早期格式(实际 150) + V1.5.3-ONLINE-READY
         print(
-            f"[m8t1] V1.5.8-ONLINE-READY: M5({p1}/116) + M6({p2}/194) + M7({p3}/213) "
+            f"[m8t1] V1.5.9-ONLINE-READY: M5({p1}/116) + M6({p2}/194) + M7({p3}/213) "
             f"+ M8({p4}/79) + M9({p5}/150) + M10({p6}/200) + M11({p7}/150) + M12({p8}/75) "
-            f"+ M15({p9}/100) + M16({p10}/100) + M17({p11}/25) = {total_passed}/{total_expected} ALL PASSED"
+            f"+ M15({p9}/100) + M16({p10}/100) + M17({p11}/25) + M18({p12}/75) = {total_passed}/{total_expected} ALL PASSED"
         )
         # V1.5.3 沿用 marker(早期 m11 5 脚本 125 测点 格式, m11t6 静态分析需要)
         # V1.5.3-ONLINE-READY 兼容 marker(m11t6 t18 期望源码含此字串)
@@ -293,7 +307,7 @@ def main() -> int:
         return 0
     # V1.5.3 沿用 marker(m11t6 t19 期望含 "NOT READY FOR V1.5.3 FREEZE" 字串)
     print(
-        f"[m8t1] {failures} CHECK(S) FAILED — NOT READY FOR V1.5.4 FREEZE "
+        f"[m8t1] {failures} CHECK(S) FAILED — NOT READY FOR V1.5.9 FREEZE "
         f"(V1.5.3 沿用: NOT READY FOR V1.5.3 FREEZE)"
     )
     return 1

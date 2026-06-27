@@ -28,8 +28,17 @@ from app.core.database import AsyncSessionLocal
 from app.models import Symbol  # 复用 metadata 引用 options_chain / option_anomaly
 from app.services.options_anomaly import (
     AnomalyThresholds,
+    DynamicBaseline,
+    GammaCluster,
     OptionCandidate,
+    OptionsSignalSummary,
+    SignalStrength,
+    compute_dynamic_vol_min,
+    compute_pcr,
+    compute_signal_strength,
+    detect_gamma_cluster,
     filter_top_anomaly_puts,
+    is_otm_assassin,
     notional,
 )
 from etl.load_short_volume import LoadResult
@@ -390,6 +399,221 @@ async def compute_option_anomaly(
         skipped=result.skipped,
     )
     return result
+
+
+# ---- V1.5.9: PCR + Gamma 聚集计算 ----
+
+
+@dataclass(slots=True)
+class PCRGammaResult:
+    """PCR + Gamma 聚集计算结果。"""
+
+    symbol: str
+    pcr_total_put: int = 0
+    pcr_total_call: int = 0
+    pcr: float = 0.0
+    pcr_z_score: float | None = None
+    pcr_extreme: bool = False
+    otm_assassin_count: int = 0
+    gamma_clusters: list[dict] | None = None
+    signal_strength: str = "NORMAL"
+    signal_modules: list[str] | None = None
+
+
+async def compute_pcr_gamma(
+    trade_date: date,
+    *,
+    symbols: list[str] | None = None,
+    session: AsyncSession | None = None,
+) -> list[PCRGammaResult]:
+    """计算 PCR + Gamma 聚集 + OTM 刺客 + signal_strength。
+
+    从 options_chain 读出当日全部合约,按 symbol 分别计算。
+    结果可缓存至 Redis(TTL=40min)。
+    """
+    own_session = session is None
+    if own_session:
+        session = AsyncSessionLocal()
+
+    results: list[PCRGammaResult] = []
+
+    try:
+        # 1) 取标的范围
+        if symbols is None:
+            rs = await session.execute(
+                select(Symbol.ticker, Symbol.type).where(Symbol.is_universe.is_(True))
+            )
+            symbol_type_map: dict[str, str] = {t: ty for t, ty in rs.all()}
+        else:
+            symbol_type_map = await _known_symbol_types(session, symbols)
+
+        if not symbol_type_map:
+            return results
+
+        # 2) 取 spot
+        spot_map = await _spot_by_symbol(session, symbol_type_map.keys(), trade_date)
+
+        # 3) 对每个 symbol 读当日全部合约(Put + Call)
+        table = Symbol.__table__.metadata.tables["options_chain"]
+        for sym in symbol_type_map:
+            sym_type = symbol_type_map.get(sym, "stock")
+
+            # 读全部合约
+            sql = (
+                select(
+                    table.c.contract,
+                    table.c.symbol,
+                    table.c.expiry,
+                    table.c.strike,
+                    table.c.right,
+                    table.c.last_price,
+                    table.c.volume,
+                    table.c.open_interest,
+                    table.c.implied_vol,
+                )
+                .where(table.c.trade_date == trade_date)
+                .where(table.c.symbol == sym)
+            )
+            rs = await session.execute(sql)
+            all_rows = [dict(r._mapping) for r in rs.all()]
+
+            if not all_rows:
+                continue
+
+            # PCR 计算
+            put_vol = sum(int(r["volume"] or 0) for r in all_rows if r["right"] == "P")
+            call_vol = sum(int(r["volume"] or 0) for r in all_rows if r["right"] == "C")
+            pcr_result = compute_pcr(put_vol, call_vol)
+
+            # 构建 candidates(用于 Gamma 和 OTM 刺客)
+            candidates = []
+            spot = spot_map.get(sym, 0.0)
+            if spot > 0:
+                for r in all_rows:
+                    dte_val = (r["expiry"] - trade_date).days if r["expiry"] else 0
+                    candidates.append(
+                        OptionCandidate(
+                            contract=r["contract"],
+                            underlying=sym,
+                            underlying_type=sym_type,
+                            trade_date=trade_date,
+                            expiry=r["expiry"],
+                            dte=dte_val,
+                            right=r["right"],
+                            strike=float(r["strike"]),
+                            last_price=float(r["last_price"] or 0.0),
+                            spot=spot,
+                            volume=int(r["volume"] or 0),
+                            open_interest=int(r["open_interest"] or 0),
+                            open_interest_prev=0,
+                        )
+                    )
+
+            # OTM 刺客(动态基准)
+            avg_30d = sum(c.volume for c in candidates) / max(len(candidates), 1)
+            dyn_vol_min = compute_dynamic_vol_min(sym_type, avg_30d)
+            assassins = [c for c in candidates if is_otm_assassin(c, dyn_vol_min)]
+
+            # Gamma 聚集
+            gamma = detect_gamma_cluster(candidates)
+            active_clusters = [gc for gc in gamma if gc.is_cluster]
+
+            # signal_strength
+            signal = compute_signal_strength(
+                pcr=pcr_result,
+                anomaly_count=0,  # 由 compute_option_anomaly 提供,此处不重复
+                otm_assassins=len(assassins),
+                gamma_clusters=gamma,
+            )
+
+            results.append(
+                PCRGammaResult(
+                    symbol=sym,
+                    pcr_total_put=put_vol,
+                    pcr_total_call=call_vol,
+                    pcr=pcr_result.pcr,
+                    pcr_z_score=pcr_result.pcr_z_score,
+                    pcr_extreme=pcr_result.is_extreme,
+                    otm_assassin_count=len(assassins),
+                    gamma_clusters=[
+                        {
+                            "strike": gc.strike,
+                            "volume": gc.total_volume,
+                            "ratio": gc.cluster_ratio,
+                            "is_cluster": gc.is_cluster,
+                        }
+                        for gc in active_clusters
+                    ],
+                    signal_strength=signal.signal_strength.value,
+                    signal_modules=signal.high_signal_modules,
+                )
+            )
+
+        await session.commit()
+    except SQLAlchemyError as e:
+        log.error("compute_pcr_gamma.fail", error=str(e))
+    finally:
+        if own_session:
+            await session.close()
+
+    log.info(
+        "compute_pcr_gamma.done",
+        trade_date=str(trade_date),
+        symbols_computed=len(results),
+        high_signals=sum(1 for r in results if r.signal_strength == "HIGH"),
+    )
+    return results
+
+
+# ---- V1.5.9: Redis 缓存预热 ----
+
+
+async def warm_options_cache(
+    trade_date: date,
+    pcr_gamma_results: list[PCRGammaResult],
+    *,
+    ttl: int = 2400,
+) -> int:
+    """将 PCR + Gamma 计算结果主动推入 Redis(ETL 预热)。
+
+    API 端点只读 Redis,不回查 DB,确保前端响应极致平滑。
+    TTL = 40min(> 30min 轮询周期)。
+
+    Returns:
+        预热成功的 symbol 数量
+    """
+    import json
+
+    from app.core.redis_client import redis_client
+
+    warmed = 0
+    for r in pcr_gamma_results:
+        key = f"opt:{r.symbol}:{trade_date.isoformat()}"
+        try:
+            await redis_client.set(
+                key,
+                json.dumps(
+                    {
+                        "symbol": r.symbol,
+                        "trade_date": trade_date.isoformat(),
+                        "pcr": r.pcr,
+                        "pcr_total_put": r.pcr_total_put,
+                        "pcr_total_call": r.pcr_total_call,
+                        "pcr_z_score": r.pcr_z_score,
+                        "pcr_extreme": r.pcr_extreme,
+                        "otm_assassin_count": r.otm_assassin_count,
+                        "gamma_clusters": r.gamma_clusters,
+                        "signal_strength": r.signal_strength,
+                        "signal_modules": r.signal_modules,
+                    },
+                    default=str,
+                ),
+                ttl=ttl,
+            )
+            warmed += 1
+        except Exception as e:  # noqa: BLE001
+            log.warning("warm_options_cache.fail", symbol=r.symbol, error=str(e))
+    return warmed
 
 
 # ---- CLI ----

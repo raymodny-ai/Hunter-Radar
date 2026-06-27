@@ -24,6 +24,7 @@ from dataclasses import dataclass, field
 from datetime import date
 from typing import Any
 
+from etl.load_ats_short import load_ats_short
 from etl.load_etf_proxy import compute_etf_proxy
 from etl.load_form4 import load_buyback, load_form4
 from etl.load_options_chain import compute_option_anomaly, load_options_chain
@@ -131,12 +132,43 @@ async def run_daily_pipeline(
         report.add_error("load_short_volume", str(e))
         await mark_failed(trade_date, "finra", error=str(e))
 
-    # ---- 3) ATS 周报(M2 接真实 CSV)----
-    # M1 阶段只写 pending
+    # ---- 3) ATS 周报(M2 接真实 CSV, V1.5.9 加 fallback 爬虫)----
     try:
-        from etl.refresh_data_status import mark_pending
-        await mark_pending(trade_date, "finra_ats", reason="M2 接入真实 ATS 周报")
-        report.stage("load_ats_short", status="pending")
+        ats_rows = await finra_run(trade_date)  # 主源尝试
+        if ats_rows:
+            # 主源成功
+            res_ats = await load_ats_short(ats_rows)
+            await mark_ready(
+                trade_date,
+                "finra_ats",
+                detail={"attempted": res_ats.attempted, "inserted": res_ats.inserted},
+            )
+            report.stage("load_ats_short", attempted=res_ats.attempted, inserted=res_ats.inserted, source="finra_ats")
+        else:
+            # 主源 null → 触发 fallback
+            log.info("[ATS] 主源返回空,触发 fallback 爬虫")
+            from etl.ats_scraper import fetch_ats_data_fallback, load_ats_fallback, check_fallback_streak
+
+            scraper = await fetch_ats_data_fallback(trade_date=trade_date)
+            if scraper.rows:
+                res_fb = await load_ats_fallback(scraper.rows)
+                await mark_ready(
+                    trade_date,
+                    "ats_fallback",
+                    detail={"attempted": res_fb.attempted, "inserted": res_fb.inserted},
+                )
+                report.stage("load_ats_short", attempted=res_fb.attempted, inserted=res_fb.inserted, source="ats_fallback")
+                # 连续降级检测
+                streak = await check_fallback_streak(trade_date)
+                if streak >= 3:
+                    log.warning(
+                        "[OPS] ATS 主数据源连续 %d 天 fallback! 请检查供应商 API 状态",
+                        streak,
+                    )
+            else:
+                from etl.refresh_data_status import mark_pending
+                await mark_pending(trade_date, "ats_fallback", reason="主源和 fallback 均无数据")
+                report.stage("load_ats_short", status="pending", source="none")
     except Exception as e:  # noqa: BLE001
         report.add_error("load_ats_short", str(e))
 
@@ -173,6 +205,19 @@ async def run_daily_pipeline(
                 hits=ar.hits,
                 inserted=ar.inserted,
             )
+
+            # V1.5.9: PCR + Gamma 聚集 + OTM 刺客
+            from etl.load_options_chain import compute_pcr_gamma, warm_options_cache
+
+            pg_results = await compute_pcr_gamma(trade_date)
+            report.stage(
+                "compute_pcr_gamma",
+                symbols=len(pg_results),
+                high_signals=sum(1 for r in pg_results if r.signal_strength == "HIGH"),
+            )
+            # 缓存预热推入 Redis(TTL=40min)
+            warmed = await warm_options_cache(trade_date, pg_results)
+            report.stage("warm_options_cache", warmed=warmed)
         except Exception as e:  # noqa: BLE001
             report.add_error("options_chain_or_anomaly", str(e))
             await mark_failed(trade_date, "yfinance_options", error=str(e))

@@ -170,6 +170,42 @@ export const api = {
 
 
 
+  // §3.1 V1.5.9 Options Anomaly V2(纯 Redis 读,PCR + Gamma + OTM 刺客)
+  getOptionsAnomalyV2: (ticker: string) =>
+    request<{
+      symbol: string;
+      trade_date: string;
+      pcr: number;
+      pcr_total_put: number;
+      pcr_total_call: number;
+      pcr_z_score: number | null;
+      pcr_extreme: boolean;
+      otm_assassin_count: number;
+      gamma_clusters: Array<{ strike: number; volume: number; ratio: number; is_cluster: boolean }>;
+      signal_strength: "HIGH" | "NORMAL" | "LOW";
+      signal_modules: string[];
+      _cache: "hit" | "miss";
+    }>(`/symbols/${ticker}/options-anomaly-v2`),
+
+  // §3.2 V1.5.9 水位图 V2(合并主源 + ATS fallback)
+  getShortIcebergV2: (ticker: string, days = 20) =>
+    request<{
+      symbol: string;
+      series: Array<{
+        trade_date: string;
+        short_ratio: number;
+        ats_short_pct: number | null;
+        z_score_60d: number | null;
+        data_warmup: boolean;
+      }>;
+      ats_series: Array<{
+        trade_date: string;
+        ats_short_volume: number;
+        source: string;
+        is_fallback: boolean;
+      }>;
+    }>(`/symbols/${ticker}/short-iceberg-v2?days=${days}`),
+
   // §8 m6t7 灰度发布(BD-051 / FE-083)
   getAllFeatureFlags: () =>
     request<{

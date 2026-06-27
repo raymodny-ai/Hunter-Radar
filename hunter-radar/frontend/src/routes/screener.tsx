@@ -78,6 +78,7 @@ function ScreenerPage() {
                     <th className="py-2 px-2">评分</th>
                     <th className="py-2 px-2">信号</th>
                     <th className="py-2 px-2 hidden sm:table-cell">活跃模块</th>
+                    <th className="py-2 px-2 hidden lg:table-cell">Options V2</th>
                     <th className="py-2 px-2"></th>
                   </tr>
                 </thead>
@@ -115,6 +116,15 @@ function ScreenerPage() {
                         </td>
                         <td className="py-2.5 px-2 text-xs text-slate-500 hidden sm:table-cell">
                           {modules}
+                        </td>
+                        <td className="py-2.5 px-2 hidden lg:table-cell">
+                          {r.modules_active?.includes("options_high") ? (
+                            <span className="text-xs px-1.5 py-0.5 rounded border text-red-400 bg-red-950/30 border-red-800/50">
+                              HIGH
+                            </span>
+                          ) : (
+                            <span className="text-xs text-slate-600">—</span>
+                          )}
                         </td>
                         <td className="py-2.5 px-2">
                           <span className="text-slate-600 text-xs hover:text-slate-400"

@@ -11,7 +11,7 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from decimal import Decimal
-from math import log, log1p
+from math import log, log1p, tanh
 
 
 def ema_smooth(history: Sequence[float], halflife_days: int = 2) -> list[float]:
@@ -70,8 +70,7 @@ def z_score_to_score(z: float | None, *, cap: float = 3.0) -> float:
         return 50.0  # 缺失值置中
     z = max(-cap, min(cap, z))
     # 50 * (1 + tanh(z / cap)) 给出 [0, 100] 平滑映射
-    import math
-    return 50.0 * (1.0 + math.tanh(z / cap))
+    return 50.0 * (1.0 + tanh(z / cap))
 
 
 def percentile_to_score(p: float | None) -> float:
@@ -141,9 +140,75 @@ def compute_threat_score(
 
     return {
         "raw": round(raw_today, 2),
-        "ema": round(ema_today, 2),
-        "ema_series": [round(x, 2) for x in ema_series],
+        "ema": round(min(ema_today, 100.0), 2),  # Min(Score, 100) 硬截断
+        "ema_series": [round(min(x, 100.0), 2) for x in ema_series],
     }
+
+
+# ---- V1.5.9 动态权重重分配 ----
+
+# 默认权重(stock / etf)
+_DEFAULT_WEIGHTS_STOCK: dict[str, float] = {
+    "options": 0.30, "short": 0.35, "divergence": 0.20, "insider": 0.15
+}
+_DEFAULT_WEIGHTS_ETF: dict[str, float] = {
+    "options": 0.35, "short": 0.45, "divergence": 0.20
+}
+
+# 当某模块 signal=HIGH 时,该模块权重提升至 0.40,压缩其他 Normal 模块
+_HIGH_BOOST: float = 0.40
+
+
+def reallocate_weights(
+    signals: dict[str, str],
+    *,
+    base_weights: dict[str, float] | None = None,
+    symbol_type: str = "stock",
+) -> dict[str, float]:
+    """动态权重重分配:总和恒=1.0。
+
+    当某模块 signal_strength=HIGH 时,其权重提升至 _HIGH_BOOST,
+    剩余权重按 Normal 模块原比例重分配。
+
+    Args:
+        signals: {module_name: "HIGH" | "NORMAL"}
+        base_weights: 基准权重;None 时用默认(stock/etf)
+        symbol_type: "stock" | "etf"
+
+    Returns:
+        重新分配后的权重 dict(总和 = 1.0)
+    """
+    if base_weights is None:
+        base_weights = (
+            _DEFAULT_WEIGHTS_ETF.copy()
+            if symbol_type == "etf"
+            else _DEFAULT_WEIGHTS_STOCK.copy()
+        )
+
+    high_modules = [m for m, s in signals.items() if s == "HIGH" and m in base_weights]
+    if not high_modules:
+        return base_weights.copy()
+
+    # HIGH 模块均分 _HIGH_BOOST
+    per_high = _HIGH_BOOST / len(high_modules)
+    remaining = 1.0 - _HIGH_BOOST
+
+    normal_modules = [m for m in base_weights if m not in high_modules]
+    if normal_modules:
+        # 按原比例分配剩余
+        normal_sum = sum(base_weights[m] for m in normal_modules)
+        if normal_sum > 1e-9:
+            normal_weights = {
+                m: remaining * (base_weights[m] / normal_sum) for m in normal_modules
+            }
+        else:
+            normal_weights = {m: remaining / len(normal_modules) for m in normal_modules}
+    else:
+        normal_weights = {}
+
+    weights = {m: per_high for m in high_modules}
+    weights.update(normal_weights)
+    return weights
 
 
 def decide_lifecycle(

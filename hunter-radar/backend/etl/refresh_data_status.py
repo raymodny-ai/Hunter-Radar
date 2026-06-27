@@ -34,12 +34,15 @@ VALID_STATUSES = ("ready", "pending_disclosure", "failed", "skipped")
 VALID_SOURCES = (
     "finra",
     "finra_ats",
+    "ats_fallback",
     "sec_form4",
     "yfinance_eod",
     "yfinance_options",
     "compute",
     "regime",
     "etf_proxy",
+    "options_pcr",
+    "options_gamma",
 )
 
 
