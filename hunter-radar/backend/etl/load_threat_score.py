@@ -427,6 +427,9 @@ async def compute_threat_scores(
         # 3) 读历史
         history = await _read_history_scores(session, target_tickers, trade_date, history_days)
 
+        # V1.6.0: 读扩展历史(90 天)供 ML 权重优化
+        ml_history = await _read_history_scores(session, target_tickers, trade_date, 120)
+
         # 4) 算每 ticker
         payload: list[dict] = []
         # 读 V1.5.9 Options signal_strength(供动态权重重分配)
@@ -449,6 +452,31 @@ async def compute_threat_scores(
                     f4_sells.get(sym, []), buybacks.get(sym, []), trade_date
                 )
                 weights = weights_default["stock"]
+
+            # V1.6.0 ML 动态权重: 当历史 >= 90 天时,用 ML 优化权重作为 base
+            sym_ml_hist = ml_history.get(sym, [])
+            if len(sym_ml_hist) >= 90:
+                try:
+                    from app.services.weight_optimizer import get_ml_weights
+
+                    ml_scores = {
+                        "options": [h.get("module_options", 50) for h in sym_ml_hist],
+                        "short": [h.get("module_short", 50) for h in sym_ml_hist],
+                        "divergence": [h.get("module_divergence", 50) for h in sym_ml_hist],
+                    }
+                    if not is_etf:
+                        ml_scores["insider"] = [h.get("module_insider", 50) for h in sym_ml_hist]
+                    # 用 threat_score 近似价格历史计算 realized vol
+                    ml_total = [h.get("module_options", 50) for h in sym_ml_hist]
+                    ml_result = get_ml_weights(
+                        ml_scores,
+                        ml_total,
+                        symbol_type=sym_type,
+                    )
+                    if ml_result.is_valid:
+                        weights = ml_result.weights
+                except Exception as e:  # noqa: BLE001
+                    log.warning("ml_weights.fail", sym=sym, error=str(e))
 
             # V1.5.9 动态权重重分配: Options HIGH → 权重提升至 0.40
             opt_signal = options_signals.get(sym, "NORMAL")

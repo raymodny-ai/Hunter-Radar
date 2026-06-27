@@ -30,6 +30,7 @@ from etl.load_form4 import load_buyback, load_form4
 from etl.load_options_chain import compute_option_anomaly, load_options_chain
 from etl.load_short_volume import load_short_volume
 from etl.refresh_data_status import mark_failed, mark_ready
+from etl.retry_policy import etl_retry_async, run_stage_with_retry
 
 log = logging.getLogger(__name__)
 
@@ -72,14 +73,19 @@ async def run_daily_pipeline(
 ) -> PipelineReport:
     """M1 末 → M2 流水线主入口。
 
+    V1.6.0: 使用 DataProviderManager 多源降级框架取数。
+
     Args:
         trade_date: 计算当日
         skip_yahoo: True 时跳过 yfinance 拉取(便于回测 / 离线场景)
         skip_sec: True 时跳过 SEC 拉取(stub 阶段)
     """
     from etl.finra_short import run as finra_run
-    from etl.yfinance_pull import fetch_daily_bars, fetch_options_chain
+    from etl.market_data_provider import DataProviderManager
     from etl.symbol_seed import DEFAULT_SEEDS
+
+    # V1.6.0 多源管理器
+    provider_mgr = DataProviderManager()
 
     report = PipelineReport(trade_date=trade_date)
 
@@ -95,14 +101,38 @@ async def run_daily_pipeline(
                 if not seed["is_universe"]:
                     continue
                 try:
-                    bars = await fetch_daily_bars(
+                    result = await provider_mgr.fetch_daily_bars(
                         seed["ticker"],
                         trade_date - timedelta(days=10),
                         trade_date,
                     )
+                    bars = result.data
+                    if not bars:
+                        log.warning(
+                            "provider.daily_bars.empty",
+                            sym=seed["ticker"],
+                            source=result.source,
+                            fallback=result.is_fallback,
+                        )
+                        continue
                 except Exception as e:  # noqa: BLE001
-                    log.warning("yahoo.eod.fail", sym=seed["ticker"], error=str(e))
+                    log.warning("provider.eod.fail", sym=seed["ticker"], error=str(e))
                     continue
+                # V1.6.0 数据校验
+                from etl.validation import validate_daily_price
+
+                vr = validate_daily_price(bars)
+                if not vr.is_valid:
+                    log.warning(
+                        "validation.daily_price.critical",
+                        sym=seed["ticker"],
+                        outliers=vr.outlier_count,
+                    )
+                    await mark_failed(
+                        trade_date,
+                        "yfinance_eod",
+                        error=f"validation failed: {vr.outlier_count} outliers",
+                    )
                 res = await _load_dp(bars)
                 total["attempted"] += res.attempted
                 total["inserted"] += res.inserted
@@ -180,10 +210,28 @@ async def run_daily_pipeline(
                 if not (seed["is_universe"] and seed["type"] in ("stock", "etf")):
                     continue
                 try:
-                    rows = await fetch_options_chain(seed["ticker"])
+                    result = await provider_mgr.fetch_options_chain(seed["ticker"])
+                    rows = result.data
+                    if not rows:
+                        log.warning(
+                            "provider.options.empty",
+                            sym=seed["ticker"],
+                            source=result.source,
+                        )
+                        continue
                 except Exception as e:  # noqa: BLE001
-                    log.warning("yahoo.opt.fail", sym=seed["ticker"], error=str(e))
+                    log.warning("provider.opt.fail", sym=seed["ticker"], error=str(e))
                     continue
+                # V1.6.0 数据校验
+                from etl.validation import validate_options_chain
+
+                vr_opt = validate_options_chain(rows)
+                if not vr_opt.is_valid:
+                    log.warning(
+                        "validation.options.critical",
+                        sym=seed["ticker"],
+                        outliers=vr_opt.outlier_count,
+                    )
                 res = await load_options_chain(rows, trade_date=trade_date)
                 total["attempted"] += res.attempted
                 total["inserted"] += res.inserted
@@ -326,6 +374,22 @@ async def run_daily_pipeline(
                 await session.commit()
     except Exception as e:  # noqa: BLE001
         report.add_error("compute_threat_score", str(e))
+
+    # ---- 9) V1.6.0: 刷新 Screener 物化视图 ----
+    try:
+        from sqlalchemy import text as _t
+
+        from app.core.database import AsyncSessionLocal
+
+        async with AsyncSessionLocal() as session:
+            await session.execute(
+                _t("REFRESH MATERIALIZED VIEW CONCURRENTLY mv_screener_top100")
+            )
+            await session.commit()
+            report.stage("refresh_mv_screener", status="ok")
+    except Exception as e:  # noqa: BLE001
+        # 物化视图不存在时忽略(首次部署未执行 migration)
+        log.warning("refresh_mv_screener.skip", error=str(e))
 
     return report
 

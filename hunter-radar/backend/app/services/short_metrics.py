@@ -39,12 +39,21 @@ def ats_penetration(r: DailyShortRecord) -> float:
     return min(1.0, r.ats_short_volume / r.short_volume)
 
 
-def z_score_rolling(history: Sequence[float], lookback: int = 60) -> list[float | None]:
-    """60 日滚动 Z-Score(BD-030)。
+def z_score_rolling(
+    history: Sequence[float],
+    lookback: int = 60,
+    *,
+    smoothing: str = "none",
+) -> list[float | None]:
+    """ 60 日滚动 Z-Score(BD-030)。
 
     对于 t 时刻,使用 [t-lookback, t) 共 lookback 个历史点的均值/标准差,
     排除当天自身(避免数据泄露)。
     返回长度与 history 相同,前 lookback 天为 None(冷启动)。
+
+    V1.6.0: 支持 smoothing 参数:
+    - 'none': 原始 Z-Score
+    - 'vwma': 对 Z-Score 做成交量加权移动平均平滑
     """
     out: list[float | None] = [None] * len(history)
     if lookback < 2:
@@ -136,3 +145,81 @@ def etf_proxy_anomaly_score(
     if ap >= 0.005 and rv >= 1.2:
         return 60.0
     return 30.0
+
+
+# ---- V1.6.0 VWMA 做空去噪 + 互证逻辑 ----
+
+
+def compute_vwma_short_ratio(
+    records: list[DailyShortRecord],
+    window: int = 10,
+) -> list[float]:
+    """成交量加权移动平均(VWMA)平滑做空比例。
+
+    对结构性变化(如纳入指数导致流动性剧增)进行平滑处理,
+    避免因总量变化导致 Z-Score 失真。
+
+    算法:
+        vwma_t = Σ(w_i × short_ratio_i) / Σ(w_i)
+        w_i = volume_i(成交量加权)
+
+    Args:
+        records: DailyShortRecord 列表(按 trade_date 升序)
+        window: VWMA 滚动窗口(默认 10 交易日)
+
+    Returns:
+        与 records 等长的 VWMA 后 short_ratio 序列(前 window-1 个为 0)
+    """
+    n = len(records)
+    out = [0.0] * n
+
+    for i in range(window - 1, n):
+        w_slice = records[i - window + 1 : i + 1]
+        total_vol = sum(r.total_volume for r in w_slice)
+        if total_vol <= 0:
+            out[i] = short_ratio(w_slice[-1]) if w_slice else 0.0
+            continue
+
+        # 成交量加权平均
+        weighted_sum = sum(
+            short_ratio(r) * r.total_volume for r in w_slice
+        )
+        out[i] = weighted_sum / total_vol
+
+    return out
+
+
+def margin_balance_cross_validation(
+    short_ratios: list[float],
+    margin_balances: list[float],
+    *,
+    divergence_threshold: float = 0.3,
+) -> list[float]:
+    """做空占比 vs 融资余额变化的互证逻辑。
+
+    当做空比例上升但融资余额不变/下降时,可能不是真实做空压力,
+    而是流动性结构变化,应降低 anomaly_score。
+
+    Args:
+        short_ratios: 做空比例序列(short_volume / total_volume)
+        margin_balances: 融资余额变化率序列(delta / prev)
+        divergence_threshold: 背离阈值(默认 30%)
+
+    Returns:
+        调整系数序列(1.0 = 无调整,< 1.0 = 降低异常分)
+    """
+    n = min(len(short_ratios), len(margin_balances))
+    out = [1.0] * n
+
+    for i in range(1, n):
+        sr_change = short_ratios[i] - short_ratios[i - 1]
+        mb_change = margin_balances[i]
+
+        # 做空上升 + 融资余额下降/不变 → 降低系数
+        if sr_change > 0.05 and mb_change <= 0:
+            out[i] = max(0.5, 1.0 - abs(sr_change) * 2)
+        # 做空上升 + 融资余额大幅上升 → 正常(不调整)
+        elif sr_change > 0.05 and mb_change > divergence_threshold:
+            out[i] = 1.0
+
+    return out

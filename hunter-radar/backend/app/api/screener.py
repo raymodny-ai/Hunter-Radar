@@ -51,7 +51,10 @@ async def _compute_screener(
     trade_date: date | None,
     session: AsyncSession,
 ) -> ScreenerDTO:
-    """实际取数（M4 拆出，便于 cache_or_set_json 包装）。"""
+    """实际取数（M4 拆出，便于 cache_or_set_json 包装）。
+
+    V1.6.0: 当 trade_date 为最新且 top ≤ 100 时,从物化视图读取。
+    """
     threat = Symbol.__table__.metadata.tables["threat_score_daily"]
 
     # 1) 找 trade_date（指定或最新）
@@ -65,7 +68,67 @@ async def _compute_screener(
             return ScreenerDTO(trade_date=date.today(), rows=[], total_scanned=0)
         target_date = row_max[0]
 
-    # 2) 联 symbol_master 取 name
+    # V1.6.0: 尝试从物化视图读取(最新日期 + top ≤ 100)
+    use_mv = trade_date is None and top <= 100
+    if use_mv:
+        try:
+            from sqlalchemy import text as _t
+
+            mv_sql = """
+                SELECT symbol, name, symbol_type, threat_score,
+                       signal_lifecycle, module_options, module_short,
+                       module_divergence, module_insider, nl_summary
+                FROM mv_screener_top100
+                WHERE 1=1
+            """
+            params: dict = {}
+            if symbol_type is not None:
+                mv_sql += " AND symbol_type = :st"
+                params["st"] = symbol_type
+            mv_sql += " ORDER BY threat_score DESC LIMIT :top"
+            params["top"] = top
+
+            rs = await session.execute(_t(mv_sql), params)
+            raw_rows = rs.all()
+
+            # 计数
+            count_sql = "SELECT COUNT(*) FROM mv_screener_top100"
+            if symbol_type is not None:
+                count_sql += " WHERE symbol_type = :st"
+            count_rs = await session.execute(_t(count_sql), params)
+            total_scanned = count_rs.scalar() or 0
+
+            rows: list[ScreenerRowDTO] = []
+            for i, row in enumerate(raw_rows, start=1):
+                modules = {
+                    "options": float(row.module_options or 0),
+                    "short": float(row.module_short or 0),
+                    "divergence": float(row.module_divergence or 0),
+                    "insider": float(row.module_insider or 0),
+                }
+                rows.append(
+                    ScreenerRowDTO(
+                        rank=i,
+                        symbol=row.symbol,
+                        name=row.name or row.symbol,
+                        symbol_type=row.symbol_type,
+                        threat_score=float(row.threat_score or 0),
+                        signal_lifecycle=row.signal_lifecycle or "init",
+                        modules_active=_pick_active_modules(modules),
+                        nl_summary=row.nl_summary,
+                    )
+                )
+
+            return ScreenerDTO(
+                trade_date=target_date,
+                rows=rows,
+                total_scanned=total_scanned,
+            )
+        except Exception:  # noqa: BLE001
+            # 物化视图不存在或查询失败 → 降级到原查询
+            pass
+
+    # 2) 联 symbol_master 取 name(原查询路径)
     sym = Symbol.__table__
     sql = (
         select(
@@ -98,7 +161,7 @@ async def _compute_screener(
     count_rs = await session.execute(count_sql)
     total_scanned = len(count_rs.all())
 
-    rows: list[ScreenerRowDTO] = []
+    rows = []
     for i, row in enumerate(raw_rows, start=1):
         modules = {
             "options": float(row.module_options or 0),

@@ -109,6 +109,10 @@ class Settings(BaseSettings):
     options_dynamic_baseline_etf_multiplier: float = 3.0
     options_dynamic_baseline_stock_multiplier: float = 5.0
 
+    # ---- V1.6.0 多源冗余 ----
+    alpha_vantage_api_key: str = ""  # Alpha Vantage API key(空=不启用备份源)
+    data_provider_fallback_enabled: bool = True  # 是否启用备份源降级
+
     # ---- Backtest ----
     backtest_history_years: int = 2
     backtest_goldset_min_events: int = 30

@@ -18,6 +18,7 @@ from app.api import (
     admin,
     alerts,
     analytics,
+    attribution,
     basket,
     data_status,
     edgar,
@@ -28,6 +29,7 @@ from app.api import (
     push,
     quota,
     regime,
+    regime_timeline,
     screener,
     regime,
     screener,
@@ -110,6 +112,8 @@ app.include_router(analytics.router, prefix="/api/v1/analytics", tags=["analytic
 app.include_router(admin.router, prefix="/api/v1", tags=["admin"])
 app.include_router(log_stream.router, prefix="/api/v1", tags=["log-stream"])
 app.include_router(llm.router, prefix="/api/v1", tags=["llm"])
+app.include_router(attribution.router, prefix="/api/v1", tags=["attribution"])
+app.include_router(regime_timeline.router, prefix="/api/v1", tags=["regime-timeline"])
 
 
 

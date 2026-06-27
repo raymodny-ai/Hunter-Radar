@@ -44,6 +44,16 @@ async def llm_analyze(req: LlmAnalyzeRequest) -> LlmAnalyzeResponse:
     if req.context:
         user_prompt += f"\n\n当前数据:\n{req.context}"
 
+    # V1.6.0 RAG 知识库增强:尝试从知识库检索相关历史文档
+    try:
+        from app.services.rag_knowledge_base import get_rag_context
+
+        rag_ctx = await get_rag_context(req.ticker, query_text=req.prompt)
+        if rag_ctx.doc_count > 0:
+            system_prompt = f"{system_prompt}\n\n--- Historical Context for {req.ticker} ---\n{rag_ctx.context_text}\n--- End Historical Context ---"
+    except Exception:  # noqa: BLE001
+        pass  # RAG 不可用时降级为原始行为
+
     if model == "deepseek-v4-pro":
         api_key = keys.get("deepseek", "")
         if not api_key:
