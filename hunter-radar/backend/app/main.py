@@ -6,11 +6,12 @@ import logging
 
 import sentry_sdk
 import structlog
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import ORJSONResponse
-from fastapi.utils import get_openapi
+from fastapi.openapi.utils import get_openapi
 from sqlalchemy import text
 
 from app.api import (
@@ -28,8 +29,11 @@ from app.api import (
     quota,
     regime,
     screener,
-    subscriptions,
+    regime,
+    screener,
     symbols,
+    llm,
+    log_stream,
 )
 from app.core.config import settings
 from app.core.database import engine
@@ -44,6 +48,10 @@ structlog.configure(
         structlog.dev.ConsoleRenderer(),
     ]
 )
+# 安装 SSE 日志处理器(将所有 structlog 输出推送到前端 SSE 流)
+from app.api.log_stream import install_sse_logger
+install_sse_logger()
+
 log = structlog.get_logger("hunter_radar")
 logging.basicConfig(level=settings.log_level)
 
@@ -87,8 +95,7 @@ app.include_router(push.router, prefix="/api/v1", tags=["push"])
 app.include_router(data_status.router, prefix="/api/v1", tags=["data-status"])
 # m5t8 FE-064 BD-076 配额查询端点
 app.include_router(quota.router, prefix="/api/v1", tags=["auth"])
-# m6t4 BD-105 Stripe 订阅接入(沙箱 fallback)
-app.include_router(subscriptions.router, prefix="/api/v1", tags=["subscriptions"])
+
 # m6t7 灰度发布 flag 端点
 app.include_router(feature_flags.router, prefix="/api/v1", tags=["feature-flags"])
 # m6t8 BD-051 8-K Item 8.01 重大事件流
@@ -101,6 +108,11 @@ app.include_router(etf.router, prefix="/api/v1/etf", tags=["etf"])
 app.include_router(analytics.router, prefix="/api/v1/analytics", tags=["analytics"])
 # m7t7 V1.5 OpenAPI freeze admin 端点(ETL run / backtest run / result / webhook replay)
 app.include_router(admin.router, prefix="/api/v1", tags=["admin"])
+app.include_router(log_stream.router, prefix="/api/v1", tags=["log-stream"])
+app.include_router(llm.router, prefix="/api/v1", tags=["llm"])
+
+
+
 
 
 # ---- 自定义 OpenAPI(便于前端 openapi-typescript 自动生成类型) ----

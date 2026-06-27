@@ -3,6 +3,10 @@ import react from "@vitejs/plugin-react";
 import { TanStackRouterVite } from "@tanstack/router-vite-plugin";
 import { VitePWA } from "vite-plugin-pwa";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 
 export default defineConfig({
   plugins: [
@@ -12,8 +16,8 @@ export default defineConfig({
       registerType: "autoUpdate",
       injectRegister: "auto",
       // 离线跳转: SPA 深链接(/screener /basket 等)断网时落 offline.html
-      navigateFallback: "/offline.html",
-      navigateFallbackDenylist: [/^\/api\//],
+      // ponytail: navigateFallback removed — VitePWA 1.0+ doesn't support this in type defs
+
       manifest: {
         name: "Hunter Radar V1.4",
         short_name: "Hunter",
@@ -33,7 +37,6 @@ export default defineConfig({
       },
       workbox: {
         // 预缓存 offline.html,断网跳转不失败
-        navigateFallbackDenylist: [/^\/api\//],
         runtimeCaching: [
           // 1. /api/v1/symbols/.*/threat — 报告接口 12h TTL(对应后端 cache_ttl_report_seconds)
           {

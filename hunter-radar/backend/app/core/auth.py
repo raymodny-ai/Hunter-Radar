@@ -198,7 +198,7 @@ def _manual_decode_jwt(token: str, secret: str, alg: str = "HS256") -> dict:
 
 def create_access_token(
     user_id: UUID | str,
-    tier: Tier = "free",
+    tier: Tier = "pro",
     *,
     expire_seconds: int | None = None,
     role: str = "user",  # V1.5.3 接力期 m11t3:从 Literal 扩展为 str
@@ -245,9 +245,9 @@ def _parse_jwt_user(token: str) -> TUser:
         uid = UUID(str(sub))
     except (ValueError, TypeError) as e:
         raise HTTPException(status_code=401, detail={"message": "sub is not UUID"}) from e
-    tier = payload.get("tier", "free")
+    tier = payload.get("tier", "pro")
     if tier not in ("free", "pro"):
-        tier = "free"
+        tier = "pro"
     # V1.5.3 接力期 m11t3:role 字段用 normalize_role 规范化
     role = normalize_role(payload.get("role"))
     exp_raw = payload.get("exp")
@@ -294,11 +294,11 @@ def get_current_user(
     # 2) X-User-Id(向后兼容)
     uid = _parse_x_user_id_header(x_user_id)
     if uid is not None:
-        return TUser(user_id=uid, tier="free", exp=datetime.now(tz=timezone.utc), role="user")
+        return TUser(user_id=uid, tier="pro", exp=datetime.now(tz=timezone.utc), role="user")
     # 3) 沙箱占位
     return TUser(
         user_id=SANDBOX_PLACEHOLDER_USER_ID,
-        tier="free",
+        tier="pro",
         exp=datetime.now(tz=timezone.utc),
         role="user",
     )

@@ -10,6 +10,7 @@ from sqlalchemy import (
     Boolean,
     CHAR,
     CheckConstraint,
+    Column,
     Date,
     DateTime,
     ForeignKey,
@@ -17,6 +18,7 @@ from sqlalchemy import (
     Integer,
     Numeric,
     String,
+    Table,
     Text,
     UniqueConstraint,
     func,
@@ -105,3 +107,44 @@ class UltimateAlert(Base):
     debounce_passed: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     raw_score: Mapped[Decimal] = mapped_column(Numeric(5, 2), nullable=False)
     ema_score: Mapped[Decimal] = mapped_column(Numeric(5, 2), nullable=False)
+
+
+# ---- 其他 core Table 注册(用于 metadata.tables 查找) ----
+_SHARED_META = Base.metadata
+# 这些表只在 sql/00_init.sql 中定义,但被 API/ETL 用 metadata.tables 引用。
+# 定义足够的列使 metadata.tables[name].c.colname 可访问。
+# 注意:extend_existing 必须是关键字参数,放在所有 Column 位置参数后
+for _tname, _tcols in [
+    ("daily_price", [Column("id", BigInteger), Column("trade_date", Date), Column("symbol", Text),
+        Column("open", Numeric), Column("high", Numeric), Column("low", Numeric),
+        Column("close", Numeric), Column("adj_close", Numeric), Column("volume", BigInteger),
+        Column("source", Text)]),
+    ("short_volume", [Column("id", BigInteger), Column("trade_date", Date), Column("symbol", Text),
+        Column("short_volume", BigInteger), Column("non_short_volume", BigInteger),
+        Column("venue", Text), Column("source", Text)]),
+    ("short_ratio_daily", [Column("id", BigInteger), Column("trade_date", Date), Column("symbol", Text),
+        Column("short_ratio", Numeric), Column("z_score_60d", Numeric),
+        Column("ats_short_pct", Numeric), Column("computed_at", DateTime)]),
+    ("divergence_window", [Column("id", BigInteger), Column("trade_date", Date), Column("symbol", Text),
+        Column("price_slope_10d", Numeric), Column("short_slope_10d", Numeric),
+        Column("p_price", Numeric), Column("p_short", Numeric),
+        Column("divergence_state", Text), Column("computed_at", DateTime)]),
+    ("option_anomaly", [Column("id", BigInteger), Column("trade_date", Date), Column("symbol", Text),
+        Column("contract", Text), Column("dte", Integer), Column("oi_increase_pct", Numeric),
+        Column("volume_oi_ratio", Numeric), Column("notional", Numeric),
+        Column("is_top10_notional", Boolean), Column("oi_5d_series", ARRAY(String)),
+        Column("has_known_catalyst", Boolean), Column("catalyst_note", Text),
+        Column("computed_at", DateTime)]),
+    ("daily_screener", [Column("id", BigInteger), Column("trade_date", Date), Column("symbol", Text),
+        Column("threat_score", Numeric), Column("breakdown", JSONB), Column("rank", Integer)]),
+    ("basket", [Column("id", BigInteger), Column("user_id", UUID), Column("name", Text),
+        Column("description", Text), Column("created_at", DateTime), Column("updated_at", DateTime)]),
+    ("basket_member", [Column("id", BigInteger), Column("basket_id", BigInteger), Column("symbol", Text),
+        Column("added_at", DateTime)]),
+    ("basket_snapshot", [Column("id", BigInteger)]),
+    ("options_chain", [Column("id", BigInteger)]),
+    ("ats_short", [Column("id", BigInteger)]),
+    ("form4_event", [Column("id", BigInteger)]),
+]:
+    if _tname not in _SHARED_META.tables:
+        Table(_tname, _SHARED_META, *_tcols, extend_existing=True)

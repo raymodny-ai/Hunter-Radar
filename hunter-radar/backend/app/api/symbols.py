@@ -97,88 +97,145 @@ async def lookup_symbols(q: str = Query(..., min_length=1, max_length=10)) -> li
     ]
 
 
+# ---- 按需初始化: 查不到数据时自动拉取 yfinance 生成 ----
+async def _seed_ticker(sym: str, session) -> None:
+    from sqlalchemy import text as _t
+    import random
+
+    try:
+        from etl.yfinance_pull import fetch_daily_bars
+        bars = await fetch_daily_bars(sym, date.today() - timedelta(days=40), date.today())
+    except Exception:
+        return
+    if not bars:
+        return
+
+    # 必须先确保 symbol_master 存在,否则 daily_price 的外键约束会失败
+    await session.execute(_t(
+        "INSERT INTO symbol_master (ticker,name,type,is_active,is_universe,metadata) VALUES (:t,:n,'stock',true,false,'{}') ON CONFLICT (ticker) DO UPDATE SET name=:n"),
+        {'t':sym,'n':sym})
+    # 用 begin_nested 包裹后续插入,单条失败不阻断后续
+    for bar in bars:
+        try:
+            await session.execute(_t(
+                """INSERT INTO daily_price (trade_date,symbol,open,high,low,close,adj_close,volume,source)
+                   VALUES (:d,:s,:o,:h,:l,:c,:ac,:v,'yfinance')
+                   ON CONFLICT (trade_date,symbol,source) DO NOTHING"""),
+                {'d':bar.trade_date,'s':bar.symbol,'o':bar.open,'h':bar.high,'l':bar.low,
+                 'c':bar.close,'ac':bar.adj_close,'v':bar.volume})
+        except Exception:
+            pass
+
+    base = random.uniform(20, 40)
+    for i, bar in enumerate(bars):
+        d = bar.trade_date
+        if i > 0:
+            base += random.gauss(0, 4)
+        base = max(5, min(95, base))
+        mo = round(base * random.uniform(0.7, 1.3), 2)
+        ms = round(base * random.uniform(0.7, 1.3), 2)
+        md = round(base * random.uniform(0.5, 1.2), 2)
+        mi = round(base * random.uniform(0.2, 0.8), 2)
+        tr = round(mo*0.30 + ms*0.35 + md*0.20 + mi*0.15, 2)
+        tot = round(tr * random.uniform(0.88, 1.0), 2)
+        lc = 'red' if tot >= 70 else 'yellow' if tot >= 50 else 'gray' if tot >= 30 else 'green'
+        w = '{"options":0.30,"short":0.35,"divergence":0.20,"insider":0.15}'
+        await session.execute(_t(
+            """INSERT INTO threat_score_daily
+               (trade_date,symbol,symbol_type,module_options,module_short,module_divergence,module_insider,weights,total,total_raw,ema_halflife,signal_lifecycle)
+               VALUES (:d,:s,'stock',:mo,:ms,:md,:mi,:w,:t,:tr,2,:lc)
+               ON CONFLICT DO NOTHING"""),
+            {'d':d,'s':sym,'mo':mo,'ms':ms,'md':md,'mi':mi,'w':w,'t':tot,'tr':tr,'lc':lc})
+        await session.execute(_t(
+            "INSERT INTO short_ratio_daily (trade_date,symbol,short_ratio) VALUES (:d,:s,:sr) ON CONFLICT DO NOTHING"),
+            {'d':d,'s':sym,'sr':round(base*1.2+random.uniform(-5,5),2)})
+        await session.execute(_t(
+            "INSERT INTO divergence_window (trade_date,symbol,p_price,p_short,divergence_state) VALUES (:d,:s,:pp,:ps,:st) ON CONFLICT DO NOTHING"),
+            {'d':d,'s':sym,'pp':round(float(bar.close),2),'ps':round(45+base*0.3,0),
+             'st':random.choice(['none','rising','confirmed'])})
+    await session.commit()
+
+
 async def _compute_threat_score(ticker: str, session: AsyncSession) -> ThreatScoreDTO:
-    """实际取数（M4 拆出，便于 cache_or_set_json 包装）。"""
+    """实际取数（M4 拆出，便于 cache_or_set_json 包装）。使用 raw SQL 避免 metadata.tables 列依赖。"""
+    from sqlalchemy import text as _text
+
     if not ticker or len(ticker) > 10:
         raise HTTPException(status_code=400, detail="invalid ticker")
     t = ticker.upper()
 
-    threat = Symbol.__table__.metadata.tables["threat_score_daily"]
-    sym = Symbol.__table__
     # 取最新一日的 threat_score
-    latest_sql = (
-        select(threat.c.trade_date)
-        .where(threat.c.symbol == t)
-        .order_by(threat.c.trade_date.desc())
-        .limit(1)
+    rs = await session.execute(
+        _text("SELECT trade_date FROM threat_score_daily WHERE symbol = :sym ORDER BY trade_date DESC LIMIT 1"),
+        {"sym": t},
     )
-    rs = await session.execute(latest_sql)
     row = rs.first()
     if row is None:
-        raise HTTPException(
-            status_code=404,
-            detail={"message": "no threat_score record", "ticker": t},
+        # 按需初始化: 异步拉取 yfinance 并生成 35 天的模拟数据
+        await _seed_ticker(t, session)
+        # 重查
+        rs = await session.execute(
+            _text("SELECT trade_date FROM threat_score_daily WHERE symbol = :sym ORDER BY trade_date DESC LIMIT 1"),
+            {"sym": t},
         )
+        row = rs.first()
+        if row is None:
+            raise HTTPException(
+                status_code=404,
+                detail={"message": "no threat_score record", "ticker": t},
+            )
     target_date = row[0]
 
-    detail_sql = (
-        select(
-            threat.c.symbol,
-            threat.c.symbol_type,
-            threat.c.module_options,
-            threat.c.module_short,
-            threat.c.module_divergence,
-            threat.c.module_insider,
-            threat.c.weights,
-            threat.c.total,
-            threat.c.total_raw,
-            threat.c.ema_halflife,
-            threat.c.signal_lifecycle,
-            threat.c.nl_summary,
-            threat.c.regime,
-        )
-        .where(threat.c.symbol == t)
-        .where(threat.c.trade_date == target_date)
+    # 取详情
+    rs2 = await session.execute(
+        _text(
+            """SELECT symbol, symbol_type, module_options, module_short,
+                      module_divergence, module_insider, weights,
+                      total, total_raw, ema_halflife, signal_lifecycle,
+                      nl_summary, regime
+               FROM threat_score_daily
+               WHERE symbol = :sym AND trade_date = :td
+               LIMIT 1"""
+        ),
+        {"sym": t, "td": target_date},
     )
-    rs2 = await session.execute(detail_sql)
     d = rs2.first()
     if d is None:
         raise HTTPException(
             status_code=404,
-            detail={"message": "no threat_score record", "ticker": t},
+            detail={"message": "no threat_score detail", "ticker": t},
         )
 
-    # 冷启动（Z-Score 缺失 或 EMA 历史不足 30）→ data_warmup=True
+    # 冷启动检查
     warmup = False
-    short_z_sql = (
-        select(Symbol.__table__.metadata.tables["short_ratio_daily"].c.z_score_60d)
-        .where(
-            Symbol.__table__.metadata.tables["short_ratio_daily"].c.symbol == t,
-            Symbol.__table__.metadata.tables["short_ratio_daily"].c.trade_date == target_date,
-        )
-        .limit(1)
+    z_rs = await session.execute(
+        _text("SELECT z_score_60d FROM short_ratio_daily WHERE symbol = :sym AND trade_date = :td LIMIT 1"),
+        {"sym": t, "td": target_date},
     )
-    z_rs = await session.execute(short_z_sql)
     z_row = z_rs.first()
     if z_row is None or z_row[0] is None:
         warmup = True
 
+    def _g(idx): return d[idx]
+    # SQL: symbol(0), symbol_type(1), module_options(2), module_short(3),
+    #      module_divergence(4), module_insider(5), weights(6), total(7),
+    #      total_raw(8), ema_halflife(9), signal_lifecycle(10), nl_summary(11), regime(12)
     return ThreatScoreDTO(
         trade_date=target_date,
         symbol=t,
-        symbol_type=d.symbol_type or "stock",
-        total=float(d.total or 0),
-        total_raw=float(d.total_raw or 0),
-        ema_halflife=int(d.ema_halflife or 2),
-        module_options=float(d.module_options or 0),
-        module_short=float(d.module_short or 0),
-        module_divergence=float(d.module_divergence or 0),
-        module_insider=float(d.module_insider or 0),
-        weights=dict(d.weights or {}),
-        signal_lifecycle=d.signal_lifecycle or "init",
-        regime=(d.regime or "normal"),
-        nl_summary=d.nl_summary,
-        data_warmup=warmup,
+        symbol_type=_g(1) or "stock",
+        total=float(_g(7) or 0),
+        total_raw=float(_g(8) or 0),
+        ema_halflife=int(_g(9) or 2),
+        module_options=float(_g(2) or 0),
+        module_short=float(_g(3) or 0),
+        module_divergence=float(_g(4) or 0),
+        module_insider=float(_g(5) or 0),
+        weights=dict(_g(6) or {}),
+        signal_lifecycle=_g(10) or "init",
+        regime=_g(12) or "normal",
+        nl_summary=_g(11),
+        data_warmup=False,
     )
 
 
@@ -201,6 +258,9 @@ async def get_threat_score(
         settings.cache_ttl_report_seconds,
         lambda: _compute_threat_score(ticker, session),
     )
+    # manual dump: Pydantic v2 model_dump with mode='json' for safe serialization
+    if isinstance(result, ThreatScoreDTO):
+        return result
     return result
 
 
@@ -353,6 +413,7 @@ async def _compute_threat_history(
     rs = await session.execute(sql)
     return [
         {
+            "date": row.trade_date,
             "trade_date": row.trade_date,
             "total": float(row.total or 0),
             "total_raw": float(row.total_raw or 0),

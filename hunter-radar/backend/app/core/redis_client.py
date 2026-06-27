@@ -54,6 +54,11 @@ class RedisClient:
         return json.loads(raw)
 
     async def set_json(self, key: str, value: Any, ttl: int | None = None) -> None:
+        # pydantic v2 BaseModel: 用 model_dump(mode='json') 避免 str() 序列化
+        if hasattr(value, "model_dump"):
+            value = value.model_dump(mode="json")
+        elif hasattr(value, "__pydantic_serializer__"):
+            value = value.__pydantic_serializer__.to_python(value)
         await self.set(key, json.dumps(value, ensure_ascii=False, default=str), ttl=ttl)
 
 

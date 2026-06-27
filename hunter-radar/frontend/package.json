@@ -34,7 +34,10 @@
     "zustand": "^4.5.5"
   },
   "devDependencies": {
+    "@sentry/react": "^10.62.0",
     "@tanstack/router-devtools": "^1.81.5",
+    "@tanstack/router-vite-plugin": "^1.167.18",
+    "@types/node": "^26.0.1",
     "@types/react": "^18.3.12",
     "@types/react-dom": "^18.3.1",
     "@typescript-eslint/eslint-plugin": "^8.13.0",

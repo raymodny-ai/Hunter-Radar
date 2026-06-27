@@ -15,11 +15,13 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
     ...init,
   });
   if (!r.ok) {
+    // 先用 text() 再尝试 JSON.parse,避免 body stream already read
+    const body = await r.text();
     let detail: unknown = null;
     try {
-      detail = await r.json();
+      detail = JSON.parse(body);
     } catch {
-      detail = await r.text();
+      detail = body;
     }
     throw new ApiError(r.status, detail);
   }
@@ -166,59 +168,7 @@ export const api = {
   getDataStatus: () =>
     request<DataStatusDTO>(`/data-status`),
 
-  // §6.3 FE-064 BD-076 免费版每日查询配额
-  getQuota: () =>
-    request<QuotaDTO>(`/auth/quota`),
 
-  // §7 BD-105 M6 订阅(Stripe 沙箱 fallback)
-  getPlans: () =>
-    request<{
-      plans: Array<{
-        id: "pro_monthly" | "pro_yearly";
-        name: string;
-        price_usd: number;
-        billing_period_days: number;
-        savings_usd: number;
-      }>;
-    }>(`/subscriptions/plans`),
-
-  postCheckout: (plan: "pro_monthly" | "pro_yearly") =>
-    request<{
-      session_id: string;
-      checkout_url: string;
-      plan: string;
-      price_usd: number;
-      period_days: number;
-      sandbox: boolean;
-    }>(`/subscriptions/checkout`, {
-      method: "POST",
-      body: JSON.stringify({ plan }),
-    }),
-
-  getMySubscription: () =>
-    request<{
-      user_id: string;
-      tier: "free" | "pro";
-      status: "active" | "canceled" | "past_due" | "incomplete" | "none";
-      plan: "pro_monthly" | "pro_yearly" | null;
-      current_period_end: number | null;
-      current_period_end_iso?: string | null;
-      cancel_at_period_end: boolean;
-      stripe_customer_id?: string;
-      stripe_subscription_id?: string;
-    }>(`/subscriptions/me`),
-
-  postCancelSubscription: (atPeriodEnd = true) =>
-    request<{
-      user_id: string;
-      tier: "free" | "pro";
-      status: string;
-      plan: string | null;
-      cancel_at_period_end: boolean;
-    }>(`/subscriptions/cancel`, {
-      method: "POST",
-      body: JSON.stringify({ at_period_end: atPeriodEnd }),
-    }),
 
   // §8 m6t7 灰度发布(BD-051 / FE-083)
   getAllFeatureFlags: () =>
@@ -274,48 +224,7 @@ export type DataStatusDTO = {
   redis_ok: boolean;
 };
 
-/** §7 BD-105 M6 订阅计划 DTO。 */
-export type PlanDTO = {
-  id: "pro_monthly" | "pro_yearly";
-  name: string;
-  price_usd: number;
-  billing_period_days: number;
-  savings_usd: number;
-};
 
-/** §7 BD-105 M6 我的订阅状态 DTO。 */
-export type MySubscriptionDTO = {
-  user_id: string;
-  tier: "free" | "pro";
-  status: "active" | "canceled" | "past_due" | "incomplete" | "none";
-  plan: "pro_monthly" | "pro_yearly" | null;
-  current_period_end: number | null;
-  current_period_end_iso?: string | null;
-  cancel_at_period_end: boolean;
-  stripe_customer_id?: string;
-  stripe_subscription_id?: string;
-};
-
-/** §7 BD-105 M6 Checkout session DTO。 */
-export type CheckoutSessionDTO = {
-  session_id: string;
-  checkout_url: string;
-  plan: string;
-  price_usd: number;
-  period_days: number;
-  sandbox: boolean;
-};
-
-/** §6.3 FE-064 BD-076 免费版每日查询配额 DTO。 */
-export type QuotaDTO = {
-  tier: "free" | "pro";
-  used: number;
-  limit: number; // -1 代表无限(pro)
-  remaining: number; // -1 代表无限(pro)
-  reset_at: string; // ISO 8601
-  is_sandbox: boolean;
-  source: "memory" | "sandbox_default";
-};
 export type BasketDistributionDTO = {
   basket_id: number;
   trade_date: string;

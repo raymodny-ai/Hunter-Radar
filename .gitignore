@@ -38,3 +38,27 @@ dist/
 backend/scripts/m*t*_test_output*.log
 backend/scripts/m*t*_output*.log
 backend/scripts/m8t1_v*_run.log
+
+# 本地运行时产生的数据/配置
+.pg-data/
+.redis-bundle/
+.redis-config.conf
+.redis-data/
+init_pg.sh
+
+# 锁文件（平台无关，项目用 uv/pnpm 管理）
+package-lock.json
+pnpm-lock.yaml
+uv.lock
+
+# 编译产物
+*.tsbuildinfo
+*.js.map
+vite.config.d.ts
+vite.config.js
+
+# 自动生成的静态路由表（项目有 routeTree.ts 作为源）
+routeTree.gen.ts
+
+# .deb 等无关系统文件
+*.deb

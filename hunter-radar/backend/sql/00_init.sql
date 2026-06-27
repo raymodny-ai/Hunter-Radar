@@ -140,7 +140,7 @@ CREATE TABLE IF NOT EXISTS options_chain (
     underlying        TEXT NOT NULL,
     expiry            DATE NOT NULL,
     strike            NUMERIC(14, 4) NOT NULL,
-    right             CHAR(1) NOT NULL CHECK (right IN ('C','P')),
+    "right"           CHAR(1) NOT NULL CHECK ("right" IN ('C','P')),
     last_price        NUMERIC(14, 4),
     bid               NUMERIC(14, 4),
     ask               NUMERIC(14, 4),
@@ -155,7 +155,7 @@ CREATE TABLE IF NOT EXISTS options_chain (
 CREATE INDEX IF NOT EXISTS idx_options_sym_expiry
     ON options_chain (symbol, expiry);
 CREATE INDEX IF NOT EXISTS idx_options_sym_date_right
-    ON options_chain (symbol, trade_date DESC, right);
+    ON options_chain (symbol, trade_date DESC, "right");
 
 -- §3.1 计算产物:末日 Put 异常合约
 CREATE TABLE IF NOT EXISTS option_anomaly (

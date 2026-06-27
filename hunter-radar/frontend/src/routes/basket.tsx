@@ -230,7 +230,11 @@ function BasketDetailView({
       setNewTickers("");
       await refresh();
       if (r.inserted < tickers.length) {
-        setError(`已添加 ${r.inserted}/${r.submitted} 个，其余可能重复或不存在`);
+        if (r.inserted === 0) {
+          setError(`这些代码已在篮子中，无需重复添加`);
+        } else {
+          setError(`已添加 ${r.inserted} 个，${r.submitted - r.inserted} 个已在篮子中`);
+        }
       }
     } catch (e) {
       setError(e instanceof ApiError ? `API ${e.status}` : String(e));

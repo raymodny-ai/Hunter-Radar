@@ -1,28 +1,28 @@
-/** §6.3 FE-064 免费版每日 3 次查询配额 hook。
- *
- * 数据源:`GET /api/v1/auth/quota`(后端 `app/api/quota.py`)
- * - pro tier 不展示(lim=-1, remaining=-1)
- * - 沙箱模式下仍可拉取(`is_sandbox=true`),便于前端调试 UI
- * - 30s 轮询 + 5xx 抛错
- * - 与 useDataStatus 模式一致(同作者 m5t6)
+/** §6.3 no-op: always returns Pro state (payment features removed).
  */
 import { useQuery, type UseQueryResult } from "@tanstack/react-query";
 
-import { api, type QuotaDTO } from "@/lib/api";
+const PRO_STATE = {
+  tier: "pro" as const,
+  used: 0,
+  limit: -1,
+  remaining: -1,
+  reset_at: "2038-01-01T00:00:00+00:00",
+  is_sandbox: false,
+  source: "sandbox_default" as const,
+};
 
-const POLL_INTERVAL_MS = 30_000;
+export type QuotaDTO = typeof PRO_STATE;
 
 export function useApiQuota(): UseQueryResult<QuotaDTO, Error> {
   return useQuery<QuotaDTO, Error>({
     queryKey: ["quota", "current"],
-    queryFn: async () => api.getQuota(),
-    refetchInterval: POLL_INTERVAL_MS,
-    refetchOnWindowFocus: true,
-    staleTime: POLL_INTERVAL_MS / 2,
+    queryFn: async () => PRO_STATE,
+    staleTime: Infinity,
   });
 }
 
-/** 只读 peek(非 hook,给 QuotaBanner 静态场景用)。 */
+/** Always returns pro state. */
 export async function peekQuota(): Promise<QuotaDTO> {
-  return api.getQuota();
+  return PRO_STATE;
 }

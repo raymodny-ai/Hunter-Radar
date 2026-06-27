@@ -1,3 +1,22 @@
-// 由 @tanstack/router-vite-plugin 在 build 时自动生成路由树。
-// 占位文件:若 vite 插件未启用,可手写此文件。
-export { routeTree } from "./routes/__root";
+// 手动路由树（替代 @tanstack/router-vite-plugin 自动生成）
+// 参见 frontend-plan.md §4.2 Router 拓扑
+import { Route as rootRoute } from "./routes/__root";
+import { Route as indexRoute } from "./routes/index";
+import { Route as screenerRoute } from "./routes/screener";
+import { Route as symbolRoute } from "./routes/symbol.$ticker";
+import { Route as alertsRoute } from "./routes/alerts";
+import { Route as basketRoute } from "./routes/basket";
+import { createRouter } from "@tanstack/react-router";
+
+// 构建路由树
+const routeTree = rootRoute.addChildren([
+  indexRoute,
+  screenerRoute,
+  symbolRoute,
+  alertsRoute,
+  basketRoute,
+]);
+
+export const router = createRouter({ routeTree });
+
+export { routeTree };

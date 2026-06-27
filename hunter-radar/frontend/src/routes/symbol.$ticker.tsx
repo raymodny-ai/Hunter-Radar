@@ -1,5 +1,5 @@
 import { createRoute } from "@tanstack/react-router";
-import { useEffect, useState } from "react";
+import { useEffect, useState, useMemo } from "react";
 import { useTranslation } from "react-i18next";
 import { useQuery } from "@tanstack/react-query";
 import { api } from "@/lib/api";
@@ -15,6 +15,7 @@ import {
 import { useSignalLifecycle } from "@/features/useSignalLifecycle";
 import { useThreatHistory } from "@/features/useThreatHistory";
 import { useUltimateAlert } from "@/features/useUltimateAlert";
+import { LlmPanel } from "@/components/common/LlmPanel";
 
 export const Route = createRoute({
   getParentRoute: () => RootRoute,
@@ -37,6 +38,26 @@ function SymbolPage() {
   const lifecycle = useSignalLifecycle(ticker, { threshold: redThreshold });
   const history = useThreatHistory(ticker, 90);
   const ultimateAlert = useUltimateAlert(ticker);
+
+  // LLM 分析面板
+  const [llmOpen, setLlmOpen] = useState(false);
+  const llmContext = useMemo(() => {
+    if (!threat.data) return undefined;
+    const dd = threat.data;
+    return JSON.stringify({
+      symbol: dd.symbol,
+      type: dd.symbol_type,
+      trade_date: dd.trade_date,
+      threat_score: dd.total,
+      module_options: dd.module_options,
+      module_short: dd.module_short,
+      module_divergence: dd.module_divergence,
+      module_insider: dd.module_insider,
+      weights: dd.weights,
+      signal_lifecycle: dd.signal_lifecycle,
+      regime: dd.regime,
+    }, null, 2);
+  }, [threat.data]);
 
   // UltimateAlertOverlay 状态:1 弹一次 + 用户主动关闭后才能再弹
   const [overlayOpen, setOverlayOpen] = useState(false);
@@ -69,6 +90,18 @@ function SymbolPage() {
             完整数据需要 EOD 流水线对至少 30 个交易日完成 Threat Score 计算后展示。
           </span>
         </div>
+        <button
+          onClick={() => setLlmOpen(true)}
+          className="text-xs px-3 py-1.5 rounded bg-indigo-700/60 hover:bg-indigo-600 border border-indigo-600/50 text-indigo-100 flex items-center gap-1.5"
+        >
+          <span>🧠</span> LLM 分析
+        </button>
+        <LlmPanel
+          ticker={ticker}
+          visible={llmOpen}
+          onClose={() => setLlmOpen(false)}
+          context={undefined}
+        />
       </div>
     );
   }
@@ -83,19 +116,27 @@ function SymbolPage() {
             {d.symbol_type === "etf" ? "ETF" : "个股"} · {d.trade_date}
           </span>
         </h1>
-        {d.data_warmup && (
-          <span className="text-xs text-amber-400 bg-amber-900/20 border border-amber-800/50 px-2 py-1 rounded">
-            {t("common.warmup")}
-          </span>
-        )}
-        {lifecycle.data && (
-          <SignalLifecycleBadge
+        <div className="flex items-center gap-2">
+          {d.data_warmup && (
+            <span className="text-xs text-amber-400 bg-amber-900/20 border border-amber-800/50 px-2 py-1 rounded">
+              {t("common.warmup")}
+            </span>
+          )}
+          <button
+            onClick={() => setLlmOpen(true)}
+            className="text-xs px-3 py-1.5 rounded bg-indigo-700/60 hover:bg-indigo-600 border border-indigo-600/50 text-indigo-100 flex items-center gap-1.5 transition-colors"
+          >
+            <span>🧠</span> LLM 分析
+          </button>
+          {lifecycle.data && (
+            <SignalLifecycleBadge
             lifecycle={lifecycle.data.lifecycle}
             consecutiveDays={lifecycle.data.consecutiveDays}
             emaScore={lifecycle.data.emaScore}
             threshold={redThreshold}
           />
         )}
+        </div>
       </header>
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
@@ -133,9 +174,16 @@ function SymbolPage() {
         数据来源:FINRA + SEC EDGAR + Yahoo Finance。统计异常现象,仅供参考。
       </div>
 
+      <LlmPanel
+        ticker={ticker}
+        visible={llmOpen}
+        onClose={() => setLlmOpen(false)}
+        context={llmContext}
+      />
+
       <UltimateAlertOverlay
         open={overlayOpen}
-        alert={ultimateAlert.data}
+        alert={ultimateAlert.data ?? null}
         onClose={() => {
           setOverlayOpen(false);
           setDismissedAlertId(alertId);

@@ -36,11 +36,4 @@ async def health() -> dict:
     }
 
 
-@router.get("/")
-async def root() -> dict:
-    return {
-        "name": "Hunter Radar V1.4",
-        "version": __version__,
-        "docs": "/docs",
-        "openapi": "/openapi.json",
-    }
+

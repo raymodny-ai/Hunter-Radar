@@ -85,7 +85,7 @@ async def create_basket(payload: BasketCreatePayload) -> int | None:
             await session.commit()
             return int(new_id) if new_id is not None else None
         except SQLAlchemyError as e:
-            log.warning("basket.create.fail", error=str(e))
+            log.warning(f"basket.create.fail: {e}")
             await session.rollback()
             return None
 
@@ -128,7 +128,7 @@ async def list_baskets(user_id: UUID | None = None) -> list[BasketSummary]:
                 )
             return baskets
         except SQLAlchemyError as e:
-            log.warning("basket.list.fail", error=str(e))
+            log.warning(f"basket.list.fail: {e}")
             return []
 
 
@@ -161,7 +161,7 @@ async def get_basket(basket_id: int) -> BasketSummary | None:
                 updated_at=r[5].isoformat() if r[5] else "",
             )
         except SQLAlchemyError as e:
-            log.warning("basket.get.fail", error=str(e), id=basket_id)
+            log.warning(f"basket.get.fail [{basket_id}]: {e}")
             return None
 
 
@@ -190,7 +190,7 @@ async def update_basket(
             await session.commit()
             return new_id is not None
         except SQLAlchemyError as e:
-            log.warning("basket.update.fail", error=str(e), id=basket_id)
+            log.warning(f"basket.update.fail [{basket_id}]: {e}")
             await session.rollback()
             return False
 
@@ -205,7 +205,7 @@ async def delete_basket(basket_id: int) -> bool:
             await session.commit()
             return new_id is not None
         except SQLAlchemyError as e:
-            log.warning("basket.delete.fail", error=str(e), id=basket_id)
+            log.warning(f"basket.delete.fail [{basket_id}]: {e}")
             await session.rollback()
             return False
 
@@ -214,18 +214,18 @@ async def add_members(basket_id: int, tickers: Iterable[str]) -> int:
     """增成员(BD-070)。返回新插入条数(已存在自动跳过)。"""
     rows = []
     async with AsyncSessionLocal() as session:
-        # 校验 ticker 在 symbol_master 中
+        # 自动将 ticker 注册到 symbol_master（无论数据是否存在）
         sym = Symbol.__table__
         for t in tickers:
             t_up = t.strip().upper()
             if not t_up:
                 continue
-            exists = (
-                await session.execute(select(sym.c.ticker).where(sym.c.ticker == t_up).limit(1))
-            ).first()
-            if exists is None:
-                log.info("basket.add_members.skip_unknown", ticker=t_up)
-                continue
+            # 确保 symbol_master 中存在
+            await session.execute(
+                pg_insert(sym)
+                .values({"ticker": t_up, "name": t_up, "type": "stock"})
+                .on_conflict_do_nothing(index_elements=["ticker"])
+            )
             rows.append({"basket_id": basket_id, "symbol": t_up})
         if not rows:
             return 0
@@ -242,7 +242,7 @@ async def add_members(basket_id: int, tickers: Iterable[str]) -> int:
             await session.commit()
             return inserted
         except SQLAlchemyError as e:
-            log.warning("basket.add_members.fail", error=str(e), id=basket_id)
+            log.warning(f"basket.add_members.fail [{basket_id}]: {e}")
             await session.rollback()
             return 0
 
@@ -262,7 +262,7 @@ async def remove_member(basket_id: int, ticker: str) -> bool:
             await session.commit()
             return new_id is not None
         except SQLAlchemyError as e:
-            log.warning("basket.remove_member.fail", error=str(e), id=basket_id, ticker=ticker)
+            log.warning(f"basket.remove_member.fail [{basket_id}] {ticker}: {e}")
             await session.rollback()
             return False
 
@@ -283,7 +283,7 @@ async def list_members(basket_id: int) -> list[dict]:
                 for r in rs.all()
             ]
         except SQLAlchemyError as e:
-            log.warning("basket.list_members.fail", error=str(e), id=basket_id)
+            log.warning(f"basket.list_members.fail [{basket_id}]: {e}")
             return []
 
 
@@ -413,6 +413,6 @@ async def compute_basket_distribution(basket_id: int, days: int = 30) -> BasketD
             await session.commit()
             return dist
         except SQLAlchemyError as e:
-            log.warning("basket.distribution.fail", error=str(e), id=basket_id)
+            log.warning(f"basket.distribution.fail [{basket_id}]: {e}")
             await session.rollback()
             return None
