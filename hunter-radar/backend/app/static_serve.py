@@ -49,14 +49,32 @@ def _setup_static() -> None:
         return FileResponse(index_path, media_type="text/html")
 
     @app.get("/favicon.svg", include_in_schema=False)
+    async def _favicon_svg():
+        return FileResponse(str(FRONTEND_DIST / "favicon.svg"), media_type="image/svg+xml")
+
     @app.get("/icon-192.svg", include_in_schema=False)
+    async def _icon_192_svg():
+        return FileResponse(str(FRONTEND_DIST / "icon-192.svg"), media_type="image/svg+xml")
+
     @app.get("/icon-512.svg", include_in_schema=False)
+    async def _icon_512_svg():
+        return FileResponse(str(FRONTEND_DIST / "icon-512.svg"), media_type="image/svg+xml")
+
     @app.get("/manifest.webmanifest", include_in_schema=False)
+    async def _manifest():
+        return FileResponse(str(FRONTEND_DIST / "manifest.webmanifest"), media_type="application/manifest+json")
+
     @app.get("/registerSW.js", include_in_schema=False)
+    async def _register_sw():
+        return FileResponse(str(FRONTEND_DIST / "registerSW.js"), media_type="application/javascript")
+
     @app.get("/sw.js", include_in_schema=False)
+    async def _sw_js():
+        return FileResponse(str(FRONTEND_DIST / "sw.js"), media_type="application/javascript")
+
     @app.get("/offline.html", include_in_schema=False)
-    async def spa_static_root():
-        return FileResponse(index_path, media_type="text/html")
+    async def _offline_html():
+        return FileResponse(str(FRONTEND_DIST / "offline.html"), media_type="text/html")
 
     # SPA fallback: any non-API path -> index.html
     @app.get("/{full_path:path}", include_in_schema=False)
