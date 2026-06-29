@@ -44,7 +44,7 @@ export default defineConfig({
             handler: "StaleWhileRevalidate",
             options: {
               cacheName: "hunter-threat",
-              expiration: { maxAgeSeconds: 60 * 60 * 12 },
+              expiration: { maxAgeSeconds: 60 * 60 * 12, maxEntries: 5 },
               cacheableResponse: { statuses: [0, 200] },
             },
           },

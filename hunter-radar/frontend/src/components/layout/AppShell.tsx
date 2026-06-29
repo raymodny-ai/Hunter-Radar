@@ -78,16 +78,31 @@ export function AppShell({
         </main>
 
         {/* ── 右侧边栏 ─────────────────────────────────── */}
+        {/* xl: inline flex; md-xl: overlay drawer */}
         <aside
           className={[
-            "hidden xl:flex flex-col border-l border-slate-800 bg-[#0f172a]",
+            "flex-col border-l border-slate-800 bg-[#0f172a]",
             "transition-[width,transform] duration-200 ease-in-out shrink-0",
-            rightSidebarOpen ? "w-80" : "w-0 overflow-hidden",
+            // xl: inline always
+            "hidden xl:flex",
+            // md: overlay drawer mode
+            rightSidebarOpen
+              ? "!flex fixed xl:static inset-y-0 right-0 z-50 w-80 shadow-2xl"
+              : "hidden",
           ].join(" ")}
           aria-label="right-sidebar"
         >
           {rightSidebarOpen && rightSidebar}
         </aside>
+
+        {/* md drawer backdrop */}
+        {rightSidebarOpen && (
+          <div
+            className="xl:hidden fixed inset-0 z-40 bg-black/50"
+            onClick={() => useUIStore.getState().setRightSidebarOpen(false)}
+            aria-hidden="true"
+          />
+        )}
       </div>
 
       {/* ── 底部页脚 ──────────────────────────────────── */}

@@ -15,6 +15,7 @@ import { AppShell } from "@/components/layout/AppShell";
 import { TopNav } from "@/components/layout/TopNav";
 import { LeftToolbar, MobileBottomToolbar } from "@/components/layout/LeftToolbar";
 import { RightSidebar } from "@/components/layout/RightSidebar";
+import { EventTicker } from "@/components/common/EventTicker";
 import { DataStatusBanner } from "@/components/common/DataStatusBanner";
 import { LogPanel } from "@/components/common/LogPanel";
 import { Disclaimer } from "@/components/common/Disclaimer";
@@ -22,6 +23,7 @@ import { GrayReleaseBanner } from "@/components/common/GrayReleaseBanner";
 import { PWAInstallBanner } from "@/components/common/PWAInstallBanner";
 import { QuotaBanner } from "@/components/common/QuotaBanner";
 import { RegimeBanner } from "@/components/radar/RegimeBanner";
+import { usePerformanceProbe } from "@/features/usePerformanceProbe";
 
 export const Route = createRootRoute({
   component: RootLayout,
@@ -30,6 +32,9 @@ export const Route = createRootRoute({
 function RootLayout() {
   const { t } = useTranslation();
   const [logVisible, setLogVisible] = useState(false);
+
+  // FE-153: Performance probe auto-reporting
+  usePerformanceProbe();
 
   // 同步 TopNav 内部的 logVisible 状态(通过 window bridge)
   // TopNav 写入 window.__hunterLogToggle,这里读取并订阅
@@ -40,6 +45,8 @@ function RootLayout() {
 
   const banners = (
     <div className="shrink-0">
+      {/* FE-151: 8-K event marquee */}
+      <EventTicker />
       <RegimeBanner />
       <DataStatusBanner />
       <QuotaBanner />

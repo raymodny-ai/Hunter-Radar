@@ -321,5 +321,31 @@
       "buy": "增持",
       "cLevel": "C-Level 高管"
     }
+  },
+  "events8k": {
+    "ariaLabel": "8-K 重大事件跑马灯",
+    "dismiss": "关闭跑马灯"
+  },
+  "admin": {
+    "title": "管理面板",
+    "subtitle": "触发 ETL 任务、运行回测、管理 Webhook 重放",
+    "forbidden": "权限不足,仅管理员可访问。",
+    "etlTitle": "ETL 任务",
+    "etlDescription": "触发后端 ETL 流水线运行,更新所有数据源。",
+    "runETL": "运行 ETL",
+    "etlResult": "ETL 执行结果",
+    "backtestTitle": "回测引擎",
+    "backtestDescription": "对指定标的或全市场运行回测。",
+    "runBacktest": "运行回测",
+    "backtestResult": "回测执行结果",
+    "symbolPlaceholder": "标的代码(可选,留空全市场)"
+  },
+  "compliance": {
+    "scoreDisclaimer": "Threat Score 基于 FINRA / SEC EDGAR / Yahoo Finance 公开延时数据的统计异常,仅供研究参考,不构成投资建议。",
+    "infoLabel": "了解更多信息"
+  },
+  "a11y": {
+    "skipToContent": "跳过导航",
+    "chartDescription": "图表数据摘要"
   }
 }
