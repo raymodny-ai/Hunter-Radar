@@ -12,7 +12,11 @@
   },
   "regime": {
     "normal": "市场处于正常波动区间,红灯阈值 70。",
-    "panic": "市场进入恐慌模式,红灯阈值上调至 80。"
+    "panic": "市场进入恐慌模式,红灯阈值上调至 80。",
+    "page": "宏观环境",
+    "vix": "恐慌指数(VIX)",
+    "spx": "标普500",
+    "spxMa20": "SPX 20日均线"
   },
   "lifecycle": {
     "red": "红灯 — 终极警报",
@@ -114,5 +118,24 @@
     "bannerCta": "查看升级方案",
     "bannerDismiss": "关闭提示",
     "bannerDismissShort": "稍后再说"
+  },
+  "search": {
+    "placeholder": "搜索标的代码或名称…",
+    "ariaLabel": "全局标的搜索",
+    "recent": "最近搜索",
+    "clearHistory": "清空",
+    "noResults": "无匹配结果"
+  },
+  "sidebar": {
+    "watchlist": "自选",
+    "alerts": "预警",
+    "copilot": "AI 助手",
+    "watchlistHint": "自选篮子成员的实时风险状态将在 M3 对接。",
+    "alertsHint": "预警事件流将在 M3 对接 alerts API。",
+    "copilotHint": "进入标的详情页后,点击右上角 LLM 分析按钮启动 AI Copilot。",
+    "noAlerts": "暂无预警事件"
+  },
+  "dataStatus": {
+    "label": "数据管道状态"
   }
 }

@@ -62,3 +62,6 @@ routeTree.gen.ts
 
 # .deb 等无关系统文件
 *.deb
+
+# Qoder IDE 缓存
+.qoder/

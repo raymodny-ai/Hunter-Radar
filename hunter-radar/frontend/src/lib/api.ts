@@ -217,6 +217,171 @@ export const api = {
         }
       >;
     }>(`/feature-flags`),
+
+  // ── FE-115: 新增端点 ───────────────────────────────────
+
+  // §3.2.1 威胁分贡献度溯源(attribution 瀑布图数据)
+  getAttribution: (ticker: string) =>
+    request<{
+      symbol: string;
+      trade_date: string;
+      total: number;
+      contributions: Array<{
+        module: string;
+        score: number;
+        weight: number;
+        weighted_score: number;
+      }>;
+    }>(`/symbols/${ticker}/attribution`),
+
+  // §3.3 市场体制时间轴(Regime Timeline)
+  getRegimeTimeline: (days = 90) =>
+    request<
+      Array<{
+        trade_date: string;
+        regime: "normal" | "panic";
+        vix: number | null;
+        spx_close: number | null;
+      }>
+    >(`/regime-timeline?days=${days}`),
+
+  // §3.5 预警规则 CRUD
+  listAlerts: () =>
+    request<
+      Array<{
+        id: number;
+        symbol: string;
+        rule_type: string;
+        threshold: number;
+        operator: string;
+        enabled: boolean;
+        created_at: string;
+      }>
+    >(`/alerts`),
+
+  createAlert: (body: {
+    symbol: string;
+    rule_type: string;
+    threshold: number;
+    operator: string;
+  }) =>
+    request<{ id: number }>(`/alerts`, {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
+
+  getAlert: (id: number) =>
+    request<{
+      id: number;
+      symbol: string;
+      rule_type: string;
+      threshold: number;
+      operator: string;
+      enabled: boolean;
+    }>(`/alerts/${id}`),
+
+  updateAlert: (id: number, body: Partial<{
+    rule_type: string;
+    threshold: number;
+    operator: string;
+    enabled: boolean;
+  }>) =>
+    request<void>(`/alerts/${id}`, {
+      method: "PUT",
+      body: JSON.stringify(body),
+    }),
+
+  deleteAlert: (id: number) =>
+    request<void>(`/alerts/${id}`, { method: "DELETE" }),
+
+  // §6 预警历史流
+  listAlertHistory: (page = 1, pageSize = 20) =>
+    request<{
+      total: number;
+      items: Array<{
+        id: number;
+        alert_id: number;
+        symbol: string;
+        triggered_at: string;
+        value: number;
+        threshold: number;
+      }>;
+    }>(`/alerts/history?page=${page}&page_size=${pageSize}`),
+
+  // §6 Push 订阅
+  getVapidPublicKey: () =>
+    request<{ public_key: string }>(`/push/vapid-public-key`),
+
+  createPushSubscription: (body: {
+    endpoint: string;
+    p256dh: string;
+    auth: string;
+  }) =>
+    request<{ id: number }>(`/push/subscriptions`, {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
+
+  listPushSubscriptions: () =>
+    request<
+      Array<{
+        id: number;
+        endpoint: string;
+        created_at: string;
+      }>
+    >(`/push/subscriptions`),
+
+  deletePushSubscription: (id: number) =>
+    request<void>(`/push/subscriptions/${id}`, { method: "DELETE" }),
+
+  // §6 8-K 重大事件流
+  listEvents8K: (limit = 50) =>
+    request<
+      Array<{
+        id: number;
+        symbol: string;
+        filing_date: string;
+        item_type: string;
+        title: string;
+        url: string;
+      }>
+    >(`/events/8k?limit=${limit}`),
+
+  getEvents8KByTicker: (ticker: string) =>
+    request<
+      Array<{
+        id: number;
+        symbol: string;
+        filing_date: string;
+        item_type: string;
+        title: string;
+        url: string;
+      }>
+    >(`/events/8k/${ticker}`),
+
+  // §6 Admin 管理
+  adminRunETL: () =>
+    request<{ status: string }>(`/admin/etl/run`, { method: "POST" }),
+
+  adminRunBacktest: (body?: { symbol?: string }) =>
+    request<{ status: string }>(`/admin/backtest/run`, {
+      method: "POST",
+      body: body ? JSON.stringify(body) : undefined,
+    }),
+
+  adminGetBacktestResult: () =>
+    request<{ results: unknown[] }>(`/admin/backtest/result`),
+
+  // §6 Analytics 前端埋点上报
+  reportAnalytics: (events: Array<{
+    event: string;
+    value?: number;
+    meta?: Record<string, unknown>;
+  }>) =>
+    request<void>(`/analytics/events`, {
+      method: "POST",
+      body: JSON.stringify({ events }),
+    }),
 };
 
 /** §3.5 终极警报 DTO（BD-064 / FE-031）—— 与后端 UltimateAlertDTO 字段保持一致。 */

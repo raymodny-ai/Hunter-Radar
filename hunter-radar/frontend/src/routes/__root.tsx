@@ -1,6 +1,20 @@
-import { Link, Outlet, createRootRoute } from "@tanstack/react-router";
+/**
+ * FE-100 + FE-101 + FE-103 + FE-104: __root 重构
+ *
+ * 使用 AppShell 四区布局替代原有简单 header:
+ * - TopNav(顶部导航 + 搜索框 + 状态灯带)
+ * - LeftToolbar(分析器透镜)
+ * - RightSidebar(Tabs 抽屉)
+ * - MobileBottomToolbar(移动端底部栏)
+ * - 全局横幅区(DataStatus / Regime / Quota / PWA / GrayRelease)
+ */
+import { Outlet, createRootRoute } from "@tanstack/react-router";
 import { useTranslation } from "react-i18next";
 import { useState } from "react";
+import { AppShell } from "@/components/layout/AppShell";
+import { TopNav } from "@/components/layout/TopNav";
+import { LeftToolbar, MobileBottomToolbar } from "@/components/layout/LeftToolbar";
+import { RightSidebar } from "@/components/layout/RightSidebar";
 import { DataStatusBanner } from "@/components/common/DataStatusBanner";
 import { LogPanel } from "@/components/common/LogPanel";
 import { Disclaimer } from "@/components/common/Disclaimer";
@@ -17,58 +31,38 @@ function RootLayout() {
   const { t } = useTranslation();
   const [logVisible, setLogVisible] = useState(false);
 
-  return (
-    <div className="min-h-full flex flex-col">
-      <header className="border-b border-slate-800 px-4 py-3 flex items-center gap-6">
-        <Link to="/" className="font-bold text-lg tracking-wider">
-          🎯 {t("app.name")}
-        </Link>
-        <nav className="flex gap-4 text-sm text-slate-300">
-          <Link to="/screener" className="hover:text-white" activeProps={{ className: "text-white" }}>
-            {t("routes.screener")}
-          </Link>
-          <Link to="/basket" className="hover:text-white" activeProps={{ className: "text-white" }}>
-            {t("routes.basket")}
-          </Link>
-          <Link to="/alerts" className="hover:text-white" activeProps={{ className: "text-white" }}>
-            {t("routes.alerts")}
-          </Link>
-          {/* subscribe page removed (payment features removed) */}
-        </nav>
-        <div className="flex-1" />
-        <button
-          onClick={() => setLogVisible(!logVisible)}
-          className={`text-xs px-2 py-1 rounded font-mono border ${
-            logVisible
-              ? "bg-sky-900/50 border-sky-700 text-sky-200"
-              : "bg-slate-800/50 border-slate-700 text-slate-400 hover:text-slate-200"
-          }`}
-          title={logVisible ? "关闭日志面板" : "打开日志面板"}
-        >
-          📋 Logs
-        </button>
-      </header>
+  // 同步 TopNav 内部的 logVisible 状态(通过 window bridge)
+  // TopNav 写入 window.__hunterLogToggle,这里读取并订阅
+  if (typeof window !== "undefined") {
+    (window as unknown as Record<string, unknown>).__hunterLogVisible = logVisible;
+    (window as unknown as Record<string, unknown>).__hunterSetLogVisible = setLogVisible;
+  }
 
+  const banners = (
+    <div className="shrink-0">
       <RegimeBanner />
-      {/* m5t6 FE-061 全局数据未到位门控 */}
       <DataStatusBanner />
-      {/* m5t8 FE-064 BD-076 免费版每日查询配额提示(pro 不展示) */}
       <QuotaBanner />
-      {/* m6t3 BD-101 PWA 安装提示(Chrome/Edge/Android 自动弹,iOS Safari 手动引导) */}
       <PWAInstallBanner />
-      {/* m6t7 FE-083 灰度发布提示横幅(gray_release_banner flag 控制) */}
       <GrayReleaseBanner />
+    </div>
+  );
 
-      <main className="flex-1 px-4 py-6 max-w-screen-2xl w-full mx-auto">
-        <Outlet />
-      </main>
+  return (
+    <AppShell
+      topNav={<TopNav />}
+      leftToolbar={<LeftToolbar />}
+      rightSidebar={<RightSidebar />}
+      banners={banners}
+      footer={<Disclaimer />}
+    >
+      <Outlet />
 
       {/* 后台日志面板 */}
       <LogPanel visible={logVisible} />
 
-      <footer className="border-t border-slate-800 px-4 py-3 text-xs text-slate-500">
-        <Disclaimer />
-      </footer>
-    </div>
+      {/* 移动端底部工具栏(FE-107) */}
+      <MobileBottomToolbar />
+    </AppShell>
   );
 }
