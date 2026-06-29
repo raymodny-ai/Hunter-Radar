@@ -42,7 +42,7 @@ import re
 import sys
 from pathlib import Path
 
-ROOT = Path(r"d:\Financial Project\Hunter Radar\hunter-radar")
+ROOT = Path(__file__).resolve().parents[2]
 BACKEND_CORE = ROOT / "backend" / "app" / "core"
 AUTH_PY = BACKEND_CORE / "auth.py"
 ADMIN_PY = ROOT / "backend" / "app" / "api" / "admin.py"

@@ -9,7 +9,7 @@ import re
 import sys
 from pathlib import Path
 
-ROOT = Path(r"d:\Financial Project\Hunter Radar\hunter-radar")
+ROOT = Path(__file__).resolve().parents[2]
 DOCS = ROOT / "docs"
 BACKEND_SCRIPTS = ROOT / "backend" / "scripts"
 BACKEND_APP = ROOT / "backend" / "app"
@@ -233,7 +233,7 @@ def t16_handoff_milestone_table() -> bool:
 def t17_main_registers_admin_router() -> bool:
     p = BACKEND_APP / "main.py"
     txt = _read(p)
-    routers = ["subscriptions", "feature_flags", "eight_k", "admin"]
+    routers = ["feature_flags", "eight_k", "admin"]
     missing = [r for r in routers if r not in txt]
     if missing:
         print(f"  [FAIL] main.py 缺 router 注册: {missing}")
@@ -279,16 +279,8 @@ def t19_openapi_v15_48_endpoints() -> bool:
 
 
 def t20_subscriptions_signature_mode() -> bool:
-    p = BACKEND_API / "subscriptions.py"
-    txt = _read(p)
-    # 签名校验相关字段
-    if "signature_skipped" not in txt and "sandbox_skip" not in txt:
-        print("  [FAIL] subscriptions 端点缺 signature_skipped/sandbox_skip 字段")
-        return False
-    if "stripe-signature" not in txt:
-        print("  [FAIL] subscriptions 端点缺 stripe-signature header 读取")
-        return False
-    print(f"  [PASS] subscriptions webhook 含签名校验字段")
+    # V1.6 订阅模块已整体移除(2026-06-30) — 测点改为 SKIP
+    print(f"  [SKIP] subscriptions 模块已删除(2026-06-30) — signature 字段不再适用")
     return True
 
 
@@ -446,7 +438,7 @@ def t31_m7_test_scripts() -> bool:
         "m7t3_test_dataset_real.py",
         "m7t4_test_v30_final.py",
         "m7t5_test_edgar_fulltext.py",
-        "m7t6_test_stripe_webhook.py",
+        # 订阅模块已移除(2026-06-30) — m7t6 不再适用
         "m7t7_test_openapi_v15.py",
         "m7t8_test_pwa_ci.py",
         "m7t9_test_v15_prep.py",
@@ -460,14 +452,8 @@ def t31_m7_test_scripts() -> bool:
 
 
 def t32_stripe_signature_three_modes() -> bool:
-    p = BACKEND_API / "subscriptions.py"
-    txt = _read(p)
-    modes = ["sandbox_skip", "prod_verified", "prod_unavailable"]
-    found = [m for m in modes if m in txt]
-    if len(found) < 3:
-        print(f"  [FAIL] subscriptions 端点缺 signature_mode(实际 {found})")
-        return False
-    print(f"  [PASS] subscriptions 含 3 种 signature_mode")
+    # V1.6 订阅模块已整体移除(2026-06-30)— 测点改为 SKIP
+    print(f"  [SKIP] subscriptions.py 已删除(2026-06-30) — signature_mode 不再适用")
     return True
 
 

@@ -1,6 +1,6 @@
 {
   "run_id": "m5t9-2026-06-15",
-  "run_at": "2026-06-16T03:11:59.885991+00:00",
+  "run_at": "2026-06-29T17:47:30.283117+00:00",
   "is_sandbox": true,
   "weights_v10": {
     "options": 30,
@@ -23,9 +23,9 @@
     },
     "n_events_total": 31,
     "n_by_type": {
-      "short_squeeze": 8,
-      "earnings_crash": 12,
-      "institutional_slaughter": 11
+      "short_squeeze": 11,
+      "earnings_crash": 10,
+      "institutional_slaughter": 10
     },
     "hits": 0,
     "false_positives": 0,
@@ -44,9 +44,9 @@
     },
     "n_events_total": 31,
     "n_by_type": {
-      "short_squeeze": 8,
-      "earnings_crash": 12,
-      "institutional_slaughter": 11
+      "short_squeeze": 11,
+      "earnings_crash": 10,
+      "institutional_slaughter": 10
     },
     "hits": 0,
     "false_positives": 0,

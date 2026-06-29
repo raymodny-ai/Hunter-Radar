@@ -51,26 +51,23 @@ M5_SCRIPTS = [
     ("m5t11_test_documentation.py", 16),
 ]
 
-# M6(9 脚本,去掉 m6t1_test_regression 聚合型)
+# M6(6 脚本,去掉 m6t1_test_regression 聚合型 + 订阅模块的 m6t4/m6t5/m6t6(2026-06-30 移除))
 M6_SCRIPTS = [
     ("m6t2_test_pwa.py", 16),
     ("m6t3_test_install.py", 26),
-    ("m6t4_test_stripe.py", 15),
-    ("m6t5_test_subscribe.py", 18),
-    ("m6t6_test_commercial.py", 22),
     ("m6t7_test_feature_flag.py", 24),
     ("m6t8_test_eight_k.py", 19),
     ("m6t9_test_backtest_v3.py", 19),
     ("m6t10_test_documentation.py", 35),
 ]
 
-# M7(9 脚本,去掉 m7t1_test_regression 聚合型 + m7t3_test_real_dataset 旧版)
+# M7(8 脚本,去掉 m7t1_test_regression 聚合型 + m7t3_test_real_dataset 旧版 + 订阅 webhook m7t6)
 M7_SCRIPTS = [
     ("m7t2_test_signoff.py", 22),
     ("m7t3_test_dataset_real.py", 22),
     ("m7t4_test_v30_final.py", 22),
     ("m7t5_test_edgar_fulltext.py", 22),
-    ("m7t6_test_stripe_webhook.py", 22),
+    # m7t6_stripe_webhook 订阅模块移除后不再适用(2026-06-30)
     ("m7t7_test_openapi_v15.py", 22),
     ("m7t8_test_pwa_ci.py", 22),
     ("m7t9_test_v15_prep.py", 22),

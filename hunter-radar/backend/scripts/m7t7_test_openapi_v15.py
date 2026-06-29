@@ -121,22 +121,23 @@ def _t06_admin_module_endpoints():
 
 # ---------- §7 webhook summary 含「签名校验」 ----------
 def _t07_webhook_summary_signature():
-    text = SUBS_PY.read_text(encoding="utf-8")
-    assert "签名校验" in text, "subscriptions.py webhook summary 应含「签名校验」"
+    # V1.6 订阅模块已整体移除(2026-06-30)— 测点改为 PASS
+    return None
 
 
 # ---------- §8 R-31 解除:webhook 含 signature_skipped 标注 ----------
 def _t08_r31_unblocked_signature_skipped():
-    text = SUBS_PY.read_text(encoding="utf-8")
-    assert "signature_skipped" in text, "webhook 应标注 signature_skipped"
+    # V1.6 订阅模块已整体移除(2026-06-30)— 测点改为 PASS
+    return None
     assert "sandbox_skip" in text, "webhook 应标注 sandbox_skip"
 
 
 # ---------- §9 13 router 列表 ----------
 def _t09_thirteen_routers():
     text = MAIN_PY.read_text(encoding="utf-8")
+    # V1.6 订阅模块已移除(2026-06-30) — 现为 12 router
     for r in ("health", "symbols", "regime", "screener", "alerts", "basket",
-              "push", "data_status", "quota", "subscriptions", "feature_flags",
+              "push", "data_status", "quota", "feature_flags",
               "eight_k", "admin"):
         assert f"{r}.router" in text, f"main.py 应注册 {r}.router"
 
@@ -240,19 +241,18 @@ def _t20_admin_tag_in_main():
 
 # ---------- §21 subscriptions router m7t6 行为变更已落 ----------
 def _t21_subscriptions_signature_modes():
-    text = SUBS_PY.read_text(encoding="utf-8")
-    for mode in ("sandbox_skip", "prod_verified", "prod_unavailable"):
-        assert mode in text, f"subscriptions.py 应含 signature_mode={mode}"
+    # V1.6 订阅模块已整体移除(2026-06-30) — 测点改为 PASS
+    return None
 
 
 # ---------- §22 m7t7 自检:连续 22 测点全过 + 无 syntax error ----------
 def _t22_syntax_no_errors():
     import subprocess
+    import sys as _sys
     r = subprocess.run(
-        ["py", "-c",
+        [_sys.executable, "-c",
          f"import ast; ast.parse(open(r'{ADMIN_PY}', encoding='utf-8').read()); "
          f"ast.parse(open(r'{MAIN_PY}', encoding='utf-8').read()); "
-         f"ast.parse(open(r'{SUBS_PY}', encoding='utf-8').read()); "
          f"ast.parse(open(r'{DUMP_PY}', encoding='utf-8').read()); "
          "print('all syntax ok')"],
         capture_output=True, text=True, timeout=10

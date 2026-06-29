@@ -53,7 +53,7 @@ import re
 import sys
 from pathlib import Path
 
-ROOT = Path(r"d:\Financial Project\Hunter Radar\hunter-radar")
+ROOT = Path(__file__).resolve().parents[2]
 DOCS = ROOT / "docs"
 SCRIPTS = ROOT / "backend" / "scripts"
 HANDOFF_MD = DOCS / "V1.5.2-handoff.md"

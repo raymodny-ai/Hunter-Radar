@@ -11,7 +11,7 @@ import re
 import sys
 from pathlib import Path
 
-ROOT = Path(r"d:\Financial Project\Hunter Radar\hunter-radar")
+ROOT = Path(__file__).resolve().parents[2]
 DOCS = ROOT / "docs"
 BACKEND_SCRIPTS = ROOT / "backend" / "scripts"
 BACKEND_APP = ROOT / "backend" / "app"
@@ -63,15 +63,8 @@ def t03_daily_standup_exists() -> bool:
 
 
 def t04_subscription_service_exists() -> bool:
-    p = BACKEND_SERVICES / "subscription.py"
-    if not p.exists():
-        print(f"  [FAIL] subscription.py 不存在")
-        return False
-    txt = _read(p)
-    if "Subscription" not in txt or "PLAN_PRICE_USD" not in txt:
-        print("  [FAIL] subscription.py 缺关键符号")
-        return False
-    print(f"  [PASS] subscription.py 存在 ({p.stat().st_size} bytes)")
+    # V1.6 订阅模块已整体移除(2026-06-30)— 测点改为 SKIP
+    print(f"  [SKIP] subscription.py 已删除(2026-06-30)")
     return True
 
 
@@ -244,7 +237,6 @@ def t17_main_registers_m6_routers() -> bool:
     p = BACKEND_APP / "main.py"
     txt = _read(p)
     routers = [
-        "subscriptions",
         "feature_flags",
         "eight_k",
     ]
@@ -252,26 +244,13 @@ def t17_main_registers_m6_routers() -> bool:
     if missing:
         print(f"  [FAIL] main.py 缺 router 注册: {missing}")
         return False
-    print(f"  [PASS] main.py 注册 3 个 M6 router: {routers}")
+    print(f"  [PASS] main.py 注册 2 个 M6 router: {routers}")
     return True
 
 
 def t18_subscriptions_endpoints() -> bool:
-    p = BACKEND_API / "subscriptions.py"
-    txt = _read(p)
-    endpoints = [
-        "/subscriptions/checkout",
-        "/subscriptions/me",
-        "/subscriptions/cancel",
-        "/subscriptions/webhook",
-        "/subscriptions/sandbox-complete",
-        "/subscriptions/plans",
-    ]
-    found = [ep for ep in endpoints if ep in txt]
-    if len(found) < 6:
-        print(f"  [FAIL] subscriptions 端点不足 6(实际 {len(found)}/{len(endpoints)}): {found}")
-        return False
-    print(f"  [PASS] subscriptions 6 端点齐全")
+    # M6-t10 V1.6 订阅模块已整体移除(2026-06-30)— 测点改为 SKIP
+    print(f"  [SKIP] subscriptions 模块已移除(2026-06-30) — 6 端点不再适用")
     return True
 
 
@@ -409,9 +388,7 @@ def t27_handoff_risk_register() -> bool:
 def t28_m6_test_scripts() -> bool:
     scripts = [
         "m6t3_test_install.py",
-        "m6t4_test_stripe.py",
-        "m6t5_test_subscribe.py",
-        "m6t6_test_commercial.py",
+        # 订阅模块已移除(2026-06-30) — m6t4/m6t5/m6t6 不再适用
         "m6t7_test_feature_flag.py",
         "m6t8_test_eight_k.py",
         "m6t9_test_backtest_v3.py",
@@ -425,15 +402,8 @@ def t28_m6_test_scripts() -> bool:
 
 
 def t29_subscription_pricing_constants() -> bool:
-    p = BACKEND_SERVICES / "subscription.py"
-    txt = _read(p)
-    if "19" not in txt or "188" not in txt:
-        print("  [FAIL] subscription.py 缺价格常量 19 / 188")
-        return False
-    if "PLAN_PRICE_USD" not in txt:
-        print("  [FAIL] subscription.py 缺 PLAN_PRICE_USD 常量名")
-        return False
-    print("  [PASS] subscription.py 价格 19/188 + PLAN_PRICE_USD 锁定")
+    # M6-t10 V1.6 订阅模块已整体移除(2026-06-30)— 测点改为 SKIP
+    print(f"  [SKIP] subscription.py 已删除(2026-06-30) — 价格常量不再适用")
     return True
 
 

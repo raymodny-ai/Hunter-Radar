@@ -26,7 +26,7 @@ from pathlib import Path
 
 # 沙箱无前端工具链,纯静态文本/文件扫描
 
-_REPO = Path(r"d:\Financial Project\Hunter Radar\hunter-radar")
+_REPO = Path(__file__).resolve().parents[2]
 _FRONT = _REPO / "frontend"
 _SRC = _FRONT / "src"
 _I18N = _SRC / "i18n" / "zh-CN.json"

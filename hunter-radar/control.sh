@@ -25,9 +25,12 @@ case "${1:-status}" in
       nohup "$PROJECT_DIR/hunter-radar/.redis-bundle/redis-root/usr/bin/redis-server" "$PROJECT_DIR/hunter-radar/.redis-config.conf" > "$PROJECT_DIR/hunter-radar/.redis-data/redis.log" 2>&1 &
       sleep 1
     fi
-    # 启动后端
+    # 启动后端(切到 backend 目录,让 pydantic-settings 能读到 .env)
+    cd "$BACKEND_DIR"
     nohup "$VENV_PYTHON" -u -m app.static_serve > "$SERVER_LOG" 2>&1 &
-    echo "PID: $!"
+    BACKEND_PID=$!
+    cd "$PROJECT_DIR"
+    echo "PID: $BACKEND_PID"
     sleep 2
     if curl -sf http://127.0.0.1:8000/health >/dev/null 2>&1; then
       echo "✅ Hunter Radar running at http://localhost:8000"

@@ -42,7 +42,7 @@ import re
 import sys
 from pathlib import Path
 
-ROOT = Path(r"d:\Financial Project\Hunter Radar\hunter-radar")
+ROOT = Path(__file__).resolve().parents[2]
 DOCS = ROOT / "docs"
 DOC_RELEASE = DOCS / "V1.4-release-notes.md"
 

@@ -54,7 +54,7 @@ import re
 import sys
 from pathlib import Path
 
-ROOT = Path(r"d:\Financial Project\Hunter Radar\hunter-radar")
+ROOT = Path(__file__).resolve().parents[2]
 DOCS = ROOT / "docs"
 AUDIT_MD = DOCS / "ADMIN_ROLE_V152.md"
 AUTH_PY = ROOT / "backend" / "app" / "core" / "auth.py"

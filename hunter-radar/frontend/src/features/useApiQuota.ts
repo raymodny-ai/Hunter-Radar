@@ -2,6 +2,9 @@
  */
 import { useQuery, type UseQueryResult } from "@tanstack/react-query";
 
+/** 轮询间隔(毫秒) — 沙箱不实跑,但保留常量供 hooks 复用。 */
+export const POLL_INTERVAL_MS = 60_000;
+
 const PRO_STATE = {
   tier: "pro" as const,
   used: 0,
@@ -19,6 +22,7 @@ export function useApiQuota(): UseQueryResult<QuotaDTO, Error> {
     queryKey: ["quota", "current"],
     queryFn: async () => PRO_STATE,
     staleTime: Infinity,
+    refetchInterval: POLL_INTERVAL_MS,
   });
 }
 

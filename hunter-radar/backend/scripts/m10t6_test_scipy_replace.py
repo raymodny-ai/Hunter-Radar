@@ -49,7 +49,7 @@ import re
 import sys
 from pathlib import Path
 
-ROOT = Path(r"d:\Financial Project\Hunter Radar\hunter-radar")
+ROOT = Path(__file__).resolve().parents[2]
 SCRIPTS = ROOT / "backend" / "scripts"
 M7T4_RUNNER = SCRIPTS / "m7t4_run_backtest_v30_final.py"
 M7T4_TEST = SCRIPTS / "m7t4_test_v30_final.py"

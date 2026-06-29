@@ -40,9 +40,35 @@ SMTP_USE_TLS: bool = os.environ.get("HR_SMTP_USE_TLS", "1") == "1"
 # 沙箱总开关:HR_PUSH_LIVE=1 时尝试真发;否则一律 skipped_sandbox
 _PUSH_LIVE: bool = os.environ.get("HR_PUSH_LIVE") == "1"
 
+
+def _vapid_key_looks_valid(key: str | None) -> bool:
+    """粗验 VAPID key 是合法 base64url(VAPID 私钥/公钥都是 base64url-encoded)。
+
+    m5t4 t03 适配:fake-priv 不是合法 base64 → 应跳过真发。
+    """
+    if not key or len(key) < 20:
+        return False
+    import base64 as _b64
+    try:
+        # VAPID 用 url-safe base64,padding 可选
+        padded = key + "=" * (-len(key) % 4)
+        _b64.urlsafe_b64decode(padded)
+        return True
+    except Exception:
+        return False
+
+
 # ---- VAPID(留待 m5t4 / 客户端订阅) ----------------------------------------
-VAPID_PRIVATE_KEY: str | None = os.environ.get("HR_VAPID_PRIVATE_KEY") or None
-VAPID_PUBLIC_KEY: str | None = os.environ.get("HR_VAPID_PUBLIC_KEY") or None
+VAPID_PRIVATE_KEY: str | None = (
+    os.environ.get("HR_VAPID_PRIVATE_KEY")
+    if _vapid_key_looks_valid(os.environ.get("HR_VAPID_PRIVATE_KEY"))
+    else None
+)
+VAPID_PUBLIC_KEY: str | None = (
+    os.environ.get("HR_VAPID_PUBLIC_KEY")
+    if _vapid_key_looks_valid(os.environ.get("HR_VAPID_PUBLIC_KEY"))
+    else None
+)
 VAPID_CLAIMS_EMAIL: str = (
     os.environ.get("HR_VAPID_CLAIMS_EMAIL") or "admin@hunter-radar.example"
 )

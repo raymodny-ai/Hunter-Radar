@@ -25,7 +25,7 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
-ROOT = Path(r"d:\Financial Project\Hunter Radar\hunter-radar")
+ROOT = Path(__file__).resolve().parents[2]
 DOCS = ROOT / "docs"
 DOC_HANDOFF = DOCS / "V1.4-handoff.md"
 DOC_PROD_ENV = DOCS / "V1.4-prod-env-setup.md"

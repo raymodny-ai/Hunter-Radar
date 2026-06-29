@@ -216,7 +216,10 @@ def _t11_report_subcommand():
 # ---------- §12 dataset_source 指向 m7t3 沙箱 + sandbox=True ----------
 def _t12_dataset_source_correct():
     data = json.loads(COMPARE_OUTPUT.read_text(encoding="utf-8"))
-    assert data["dataset_source"] == "data\\backtest_dataset_real.sandbox.jsonl", \
+    # ponytail: 兼容 POSIX / Windows 双分隔符(原 hard-coded 反斜杠仅 Windows 通过)
+    expected = {"data/backtest_dataset_real.sandbox.jsonl",
+                "data\\backtest_dataset_real.sandbox.jsonl"}
+    assert data["dataset_source"] in expected, \
         f"dataset_source 应指向 m7t3 沙箱: {data['dataset_source']}"
     assert data["sandbox"] is True, f"sandbox 应为 True: {data['sandbox']}"
 
@@ -323,8 +326,9 @@ def _t21_mw_z_uses_erfc():
 
 # ---------- §22 CLI compare 退出码 0 + JSON 6 顶层键 ----------
 def _t22_cli_compare_exit_code():
+    import sys as _sys
     r = subprocess.run(
-        ["py", "-u", str(SCRIPT), "compare", "--output", str(COMPARE_OUTPUT)],
+        [_sys.executable, "-u", str(SCRIPT), "compare", "--output", str(COMPARE_OUTPUT)],
         capture_output=True, text=True, timeout=30
     )
     assert r.returncode == 0, f"compare CLI 退出码 {r.returncode}: {r.stderr}"

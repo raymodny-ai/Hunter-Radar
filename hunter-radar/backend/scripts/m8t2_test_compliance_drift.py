@@ -41,7 +41,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-ROOT = Path(r"d:\Financial Project\Hunter Radar\hunter-radar")
+ROOT = Path(__file__).resolve().parents[2]
 SCRIPTS = ROOT / "scripts"
 BACKEND_SCRIPTS = ROOT / "backend" / "scripts"
 BACKEND_APP = ROOT / "backend" / "app"
@@ -397,13 +397,8 @@ def t18_frontend_disclaimer_components() -> bool:
 # ----------------------------------------------------------------------
 
 def t19_subscription_pricing_locked() -> bool:
-    """subscription.py 价格 19/188 USD 锁定。"""
-    p = BACKEND_SERVICES / "subscription.py"
-    txt = _read(p)
-    if "19" not in txt or "188" not in txt or "PLAN_PRICE_USD" not in txt:
-        print(f"  [FAIL] subscription.py 价格或 PLAN_PRICE_USD 缺失")
-        return False
-    print(f"  [PASS] subscription.py 价格 19/188 USD 锁定")
+    """V1.6 订阅模块已整体移除(2026-06-30)— 测点改为 SKIP。"""
+    print(f"  [SKIP] subscription.py 已删除(2026-06-30) — pricing 不再适用")
     return True
 
 

@@ -34,7 +34,7 @@ import re
 import sys
 from pathlib import Path
 
-ROOT = Path(r"d:\Financial Project\Hunter Radar\hunter-radar")
+ROOT = Path(__file__).resolve().parents[2]
 DOCS = ROOT / "docs"
 BACKEND_APP = ROOT / "backend" / "app"
 BACKEND_SERVICES = BACKEND_APP / "services"
@@ -259,14 +259,8 @@ def t14_config_vapid_default_none() -> bool:
 # ----------------------------------------------------------------------
 
 def t15_subscriptions_signature_mode() -> bool:
-    """subscriptions.py 含 signature_mode 三态。"""
-    txt = _read(BACKEND_API / "subscriptions.py")
-    required = ["sandbox_skip", "prod_unavailable", "prod_verified"]
-    missing = [s for s in required if s not in txt]
-    if missing:
-        print(f"  [FAIL] subscriptions.py 缺 signature_mode: {missing}")
-        return False
-    print(f"  [PASS] subscriptions.py signature_mode 三态齐全")
+    """V1.6 订阅模块已整体移除(2026-06-30)— 测点改为 SKIP。"""
+    print(f"  [SKIP] subscriptions.py 已删除(2026-06-30) — signature_mode 不再适用")
     return True
 
 

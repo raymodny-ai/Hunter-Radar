@@ -291,14 +291,14 @@ def get_current_user(
                 status_code=401,
                 detail=f"unsupported auth scheme: {scheme!r}(only 'Bearer' supported)",
             )
-    # 2) X-User-Id(向后兼容)
+    # 2) X-User-Id(向后兼容)— V1.6 退场标记:返 free tier(M6 退场注释保留)
     uid = _parse_x_user_id_header(x_user_id)
     if uid is not None:
-        return TUser(user_id=uid, tier="pro", exp=datetime.now(tz=timezone.utc), role="user")
-    # 3) 沙箱占位
+        return TUser(user_id=uid, tier="free", exp=datetime.now(tz=timezone.utc), role="user")
+    # 3) 沙箱占位 — V1.6 订阅模块移除后,沙箱返 free tier(m5t2 t06 适配)
     return TUser(
         user_id=SANDBOX_PLACEHOLDER_USER_ID,
-        tier="pro",
+        tier="free",
         exp=datetime.now(tz=timezone.utc),
         role="user",
     )

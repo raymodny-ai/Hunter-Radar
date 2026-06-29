@@ -37,6 +37,8 @@ export default defineConfig({
       },
       workbox: {
         // 预缓存 offline.html,断网跳转不失败
+        navigateFallback: "/offline.html",
+        navigateFallbackDenylist: [/^\/api\//, /^\/docs/, /^\/openapi\.json$/],
         runtimeCaching: [
           // 1. /api/v1/symbols/.*/threat — 报告接口 12h TTL(对应后端 cache_ttl_report_seconds)
           {

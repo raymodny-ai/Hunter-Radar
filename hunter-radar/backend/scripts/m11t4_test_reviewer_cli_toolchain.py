@@ -54,7 +54,7 @@ import re
 import sys
 from pathlib import Path
 
-ROOT = Path(r"d:\Financial Project\Hunter Radar\hunter-radar")
+ROOT = Path(__file__).resolve().parents[2]
 # V1.5.4 接力期 m12t2:m7t2_sign_goldset.py 已物理删除,路径常量保留作为"不存在验证"用
 M7T2_PY = ROOT / "backend" / "scripts" / "m7t2_sign_goldset.py"
 # V1.5.6 接力期 m14t1:reviewer_cli 拆分为独立目录包

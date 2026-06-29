@@ -17,7 +17,7 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
-_REPO = Path(r"d:\Financial Project\Hunter Radar\hunter-radar")
+_REPO = Path(__file__).resolve().parents[2]
 _FRONT = _REPO / "frontend"
 _SRC = _FRONT / "src"
 _SENTRY = _SRC / "lib" / "sentry.ts"

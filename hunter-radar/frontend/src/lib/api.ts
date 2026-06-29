@@ -459,3 +459,18 @@ export type BasketDistributionDTO = {
     lifecycle: "init" | "red" | "yellow" | "gray" | "green";
   }>;
 };
+
+// §6.3 Quota (sandbox default pro)
+export interface QuotaDTO {
+  tier: "free" | "pro";
+  used: number;
+  limit: number;
+  remaining: number;
+  reset_at: string | null;
+  is_sandbox: boolean;
+  source: string;
+}
+
+export async function getQuota(): Promise<QuotaDTO> {
+  return request<QuotaDTO>("/auth/quota");
+}

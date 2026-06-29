@@ -55,7 +55,7 @@ import re
 import sys
 from pathlib import Path
 
-ROOT = Path(r"d:\Financial Project\Hunter Radar\hunter-radar")
+ROOT = Path(__file__).resolve().parents[2]
 SCRIPTS = ROOT / "backend" / "scripts"
 M7T2_PY = SCRIPTS / "m7t2_sign_goldset.py"
 # V1.5.6 接力期 m14t1:reviewer_cli 拆分为独立目录包
