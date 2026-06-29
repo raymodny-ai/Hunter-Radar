@@ -10,13 +10,100 @@
     "disclaimer": "本产品仅揭示统计异常现象,所有内容仅供研究参考,不构成投资建议。",
     "warmup": "数据积累中(冷启动约 60 个交易日),Z-Score 暂不可用。"
   },
+  "basket": {
+    "title": "自选篮子",
+    "create": "新建篮子",
+    "createTitle": "新建篮子",
+    "name": "名称",
+    "description": "描述",
+    "required": "必填",
+    "optional": "可选",
+    "namePlaceholder": "如:科技龙头",
+    "nameRequired": "请输入篮子名称",
+    "cancel": "取消",
+    "members": "个标的",
+    "membersTitle": "成员({{count}})",
+    "updated": "更新于",
+    "empty": "还没有篮子,点击右上角新建。",
+    "noMembers": "还没有成员。输入 ticker 批量添加(逗号或空格分隔)。",
+    "add": "添加",
+    "removeMember": "移除",
+    "alreadyExists": "这些代码已在篮子中,无需重复添加",
+    "partialAdd": "已添加 {{inserted}} 个,{{skipped}} 个已在篮子中",
+    "confirmDelete": "确定删除该篮子?",
+    "deleteBasket": "删除篮子",
+    "backToList": "返回列表",
+    "noScore": "数据积累中",
+    "notFound": "篮子不存在",
+    "insiderAlert": "C-Level 高管减持预警",
+    "histogram": {
+      "title": "分布(近 30 日)",
+      "count": "标的数",
+      "threshold": "阈值",
+      "noData": "暂无分布数据(空篮子或无 threat_score_daily 数据)",
+      "ariaLabel": "篮子 Threat Score 分布直方图"
+    },
+    "dangerCluster": {
+      "title": "危险聚集预警",
+      "membersAbove": "个标的 ≥ {{threshold}}",
+      "avgScore": "平均分"
+    },
+    "stats": {
+      "title": "统计概览",
+      "mean": "均值",
+      "min": "最小",
+      "max": "最大",
+      "tickers": "标的数",
+      "days": "平均日"
+    }
+  },
+  "alerts": {
+    "title": "预警中心",
+    "createRule": "新建规则",
+    "rulesTitle": "规则管理",
+    "historyTitle": "预警历史",
+    "noRules": "暂无预警规则。点击右上角创建第一条规则。",
+    "noHistory": "暂无预警触发记录。",
+    "edit": "编辑",
+    "delete": "删除",
+    "enable": "启用",
+    "disable": "禁用",
+    "loadMore": "加载更多",
+    "triggered": "触发值",
+    "threshold": "阈值",
+    "form": {
+      "title": "预警规则",
+      "symbol": "标的代码",
+      "symbolRequired": "请输入标的代码",
+      "ruleType": "规则类型",
+      "operator": "比较运算符",
+      "threshold": "阈值",
+      "thresholdError": "阈值必须在 0-100 之间",
+      "save": "保存",
+      "cancel": "取消"
+    },
+    "ruleTypes": {
+      "threat_score": "Threat Score",
+      "short_ratio": "做空占比",
+      "options_pcr": "期权 PCR",
+      "divergence": "量价背离",
+      "insider_sell": "内部人减持"
+    },
+    "push": {
+      "subscribed": "推送已开启",
+      "subscribing": "订阅中…",
+      "unsupported": "浏览器不支持推送",
+      "enable": "开启推送通知",
+      "unknownError": "推送订阅失败"
+    }
+  },
   "regime": {
-    "normal": "市场处于正常波动区间,红灯阈值 70。",
-    "panic": "市场进入恐慌模式,红灯阈值上调至 80。",
     "page": "宏观环境",
     "vix": "恐慌指数(VIX)",
     "spx": "标普500",
-    "spxMa20": "SPX 20日均线"
+    "spxMa20": "SPX 20日均线",
+    "normal": "市场处于正常波动区间,红灯阈值 70。",
+    "panic": "市场进入恐慌模式,红灯阈值上调至 80。"
   },
   "lifecycle": {
     "red": "红灯 — 终极警报",

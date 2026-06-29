@@ -22,5 +22,11 @@ export type { DivergencePoint, DivergenceChartProps } from "./DivergenceChart";
 export { InsiderTimeline } from "./InsiderTimeline";
 export type { InsiderAction, InsiderTimelineProps } from "./InsiderTimeline";
 
+export { SparkRadar } from "./SparkRadar";
+export type { SparkRadarProps } from "./SparkRadar";
+
+export { BasketHistogram } from "./BasketHistogram";
+export type { BasketHistogramProps } from "./BasketHistogram";
+
 export { useECharts } from "./useECharts";
 export type { EChartsOptionLoose, UseEChartsReturn } from "./useECharts";

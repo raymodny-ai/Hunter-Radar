@@ -6,6 +6,7 @@ import { Route as screenerRoute } from "./routes/screener";
 import { Route as symbolRoute } from "./routes/symbol.$ticker";
 import { Route as alertsRoute } from "./routes/alerts";
 import { Route as basketRoute } from "./routes/basket";
+import { Route as regimeRoute } from "./routes/regime";
 import { createRouter } from "@tanstack/react-router";
 
 // 构建路由树
@@ -15,6 +16,7 @@ const routeTree = rootRoute.addChildren([
   symbolRoute,
   alertsRoute,
   basketRoute,
+  regimeRoute,
 ]);
 
 export const router = createRouter({ routeTree });
