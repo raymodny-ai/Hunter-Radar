@@ -7,7 +7,6 @@ import { Route as RootRoute } from "./__root";
 import { ThreatScoreGauge } from "@/components/radar/ThreatScoreGauge";
 import { ModuleSignalLight } from "@/components/radar/ModuleSignalLight";
 import { SignalLifecycleBadge } from "@/components/radar/SignalLifecycleBadge";
-import { ThreatHistoryChart } from "@/components/radar/ThreatHistoryChart";
 import {
   UltimateAlertOverlay,
   type UltimateAlertDTO,
@@ -16,6 +15,21 @@ import { useSignalLifecycle } from "@/features/useSignalLifecycle";
 import { useThreatHistory } from "@/features/useThreatHistory";
 import { useUltimateAlert } from "@/features/useUltimateAlert";
 import { LlmPanel } from "@/components/common/LlmPanel";
+
+// M2 图表组件
+import {
+  AttributionWaterfall,
+  SignalRadar,
+  TrajectoryChart,
+  OptionsHeatmap,
+  ShortIcebergV2,
+  DivergenceChart,
+  InsiderTimeline,
+} from "@/components/charts";
+
+// react-grid-layout CSS
+import "react-grid-layout/css/styles.css";
+import "react-resizable/css/styles.css";
 
 export const Route = createRoute({
   getParentRoute: () => RootRoute,
@@ -33,7 +47,39 @@ function SymbolPage() {
     retry: 0,
   });
 
-  // V1.5.9: Options Anomaly V2(PCR + Gamma + OTM 刺客)
+  // M2: Attribution 瀑布图数据
+  const attribution = useQuery({
+    queryKey: ["attribution", ticker],
+    queryFn: () => api.getAttribution(ticker),
+    retry: 0,
+    staleTime: 1000 * 60 * 60,
+  });
+
+  // M2: Short Iceberg V2
+  const shortIceberg = useQuery({
+    queryKey: ["short-iceberg-v2", ticker],
+    queryFn: () => api.getShortIcebergV2(ticker, 30),
+    retry: 0,
+    staleTime: 1000 * 60 * 60,
+  });
+
+  // M2: Divergence
+  const divergence = useQuery({
+    queryKey: ["divergence", ticker],
+    queryFn: () => api.getDivergence(ticker, 30),
+    retry: 0,
+    staleTime: 1000 * 60 * 60,
+  });
+
+  // M2: Insider Actions
+  const insiderActions = useQuery({
+    queryKey: ["insider-actions", ticker],
+    queryFn: () => api.getInsiderActions(ticker),
+    retry: 0,
+    staleTime: 1000 * 60 * 60,
+  });
+
+  // V1.5.9: Options Anomaly V2
   const optionsV2 = useQuery({
     queryKey: ["options-v2", ticker],
     queryFn: () => api.getOptionsAnomalyV2(ticker),
@@ -41,8 +87,7 @@ function SymbolPage() {
     staleTime: 1000 * 60 * 5,
   });
 
-  // M3 联锁:信号生命周期 / 90 日轨迹 / 终极警报 三个新 hooks
-  const redThreshold = 70; // 与后端 settings.threat_red_threshold 同步
+  const redThreshold = 70;
   const lifecycle = useSignalLifecycle(ticker, { threshold: redThreshold });
   const history = useThreatHistory(ticker, 90);
   const ultimateAlert = useUltimateAlert(ticker);
@@ -67,13 +112,12 @@ function SymbolPage() {
     }, null, 2);
   }, [threat.data]);
 
-  // UltimateAlertOverlay 状态:1 弹一次 + 用户主动关闭后才能再弹
+  // UltimateAlertOverlay 状态
   const [overlayOpen, setOverlayOpen] = useState(false);
   const [dismissedAlertId, setDismissedAlertId] = useState<string | null>(null);
   const alertId = ultimateAlert.data
     ? `${ultimateAlert.data.trade_date}:${ultimateAlert.data.triggered_at}`
     : null;
-  // 端点返回新警报 → 打开 overlay(useEffect 避免 render 中 setState)
   useEffect(() => {
     if (
       ultimateAlert.data &&
@@ -85,24 +129,26 @@ function SymbolPage() {
     }
   }, [ultimateAlert.data, alertId, overlayOpen, dismissedAlertId]);
 
-  if (threat.isLoading) return <div className="text-slate-500">{t("common.loading")}</div>;
+  if (threat.isLoading) {
+    return <div className="text-slate-500">{t("common.loading")}</div>;
+  }
 
   if (threat.isError || !threat.data) {
     return (
       <div className="space-y-3">
         <h1 className="text-2xl font-bold font-mono">{ticker}</h1>
         <div className="bg-slate-900 border border-slate-800 rounded-md p-4 text-slate-400 text-sm">
-          {ticker} 的 Threat Score 暂未生成(数据积累中)。
+          {ticker} {t("symbol.noData")}
           <br />
           <span className="text-slate-500">
-            完整数据需要 EOD 流水线对至少 30 个交易日完成 Threat Score 计算后展示。
+            {t("symbol.noDataHint")}
           </span>
         </div>
         <button
           onClick={() => setLlmOpen(true)}
           className="text-xs px-3 py-1.5 rounded bg-indigo-700/60 hover:bg-indigo-600 border border-indigo-600/50 text-indigo-100 flex items-center gap-1.5"
         >
-          <span>🧠</span> LLM 分析
+          <span>🧠</span> {t("symbol.llmAnalyze")}
         </button>
         <LlmPanel
           ticker={ticker}
@@ -115,13 +161,16 @@ function SymbolPage() {
   }
 
   const d = threat.data;
+  const isEtf = d.symbol_type === "etf";
+
   return (
-    <div className="space-y-6">
+    <div className="space-y-4">
+      {/* ── 页头 ─────────────────────────────────── */}
       <header className="flex items-center justify-between">
         <h1 className="text-2xl font-bold font-mono">
           {d.symbol}{" "}
           <span className="text-slate-500 text-sm ml-2">
-            {d.symbol_type === "etf" ? "ETF" : "个股"} · {d.trade_date}
+            {isEtf ? "ETF" : t("symbol.stock")} · {d.trade_date}
           </span>
         </h1>
         <div className="flex items-center gap-2">
@@ -134,22 +183,24 @@ function SymbolPage() {
             onClick={() => setLlmOpen(true)}
             className="text-xs px-3 py-1.5 rounded bg-indigo-700/60 hover:bg-indigo-600 border border-indigo-600/50 text-indigo-100 flex items-center gap-1.5 transition-colors"
           >
-            <span>🧠</span> LLM 分析
+            <span>🧠</span> {t("symbol.llmAnalyze")}
           </button>
           {lifecycle.data && (
             <SignalLifecycleBadge
-            lifecycle={lifecycle.data.lifecycle}
-            consecutiveDays={lifecycle.data.consecutiveDays}
-            emaScore={lifecycle.data.emaScore}
-            threshold={redThreshold}
-          />
-        )}
+              lifecycle={lifecycle.data.lifecycle}
+              consecutiveDays={lifecycle.data.consecutiveDays}
+              emaScore={lifecycle.data.emaScore}
+              threshold={redThreshold}
+            />
+          )}
         </div>
       </header>
 
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        {/* 主仪表盘 */}
-        <div className="bg-slate-900 border border-slate-800 rounded-md p-6 flex flex-col items-center">
+      {/* ── FE-124: 多图表网格容器 ───────────────── */}
+      <div className="grid grid-cols-1 lg:grid-cols-12 gap-4">
+
+        {/* 第一行: Gauge + 模块信号灯 + 4D Radar */}
+        <div className="lg:col-span-3 bg-slate-900 border border-slate-800 rounded-md p-4 flex flex-col items-center">
           <ThreatScoreGauge
             value={d.total}
             raw={d.total_raw}
@@ -157,96 +208,138 @@ function SymbolPage() {
             threshold={70}
           />
           {d.nl_summary && (
-            <p className="mt-4 text-sm text-slate-300 text-center max-w-xs">{d.nl_summary}</p>
+            <p className="mt-3 text-xs text-slate-300 text-center max-w-xs">{d.nl_summary}</p>
           )}
         </div>
 
-        {/* 模块信号灯 */}
-        <div className="bg-slate-900 border border-slate-800 rounded-md p-6 lg:col-span-2">
-          <h2 className="text-sm font-semibold text-slate-300 mb-4">模块信号灯</h2>
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+        <div className="lg:col-span-5 bg-slate-900 border border-slate-800 rounded-md p-4">
+          <h2 className="text-xs font-semibold text-slate-400 mb-3">{t("symbol.moduleSignals")}</h2>
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
             <ModuleSignalLight name={t("modules.options")} value={d.module_options} />
             <ModuleSignalLight name={t("modules.short")} value={d.module_short} />
             <ModuleSignalLight name={t("modules.divergence")} value={d.module_divergence} />
             <ModuleSignalLight name={t("modules.insider")} value={d.module_insider} />
           </div>
-          <div className="mt-6 text-xs text-slate-500">
-            EMA 半衰期 {d.ema_halflife} 个交易日 · 权重 {JSON.stringify(d.weights)} · 状态机 {d.signal_lifecycle}
+          <div className="mt-3 text-[10px] text-slate-600">
+            EMA {t("symbol.emaHalflife")} {d.ema_halflife} · {t("symbol.weights")} {JSON.stringify(d.weights)} · {d.signal_lifecycle}
           </div>
+        </div>
+
+        <div className="lg:col-span-4 bg-slate-900 border border-slate-800 rounded-md p-4">
+          <h2 className="text-xs font-semibold text-slate-400 mb-2">{t("symbol.signalRadar")}</h2>
+          <SignalRadar
+            moduleOptions={d.module_options}
+            moduleShort={d.module_short}
+            moduleDivergence={d.module_divergence}
+            moduleInsider={d.module_insider}
+            isLoading={threat.isLoading}
+          />
+        </div>
+
+        {/* 第二行: Attribution + 90d Trajectory */}
+        <div className="lg:col-span-5 bg-slate-900 border border-slate-800 rounded-md p-4">
+          <h2 className="text-xs font-semibold text-slate-400 mb-2">{t("symbol.attribution")}</h2>
+          <AttributionWaterfall
+            contributions={attribution.data?.contributions}
+            total={attribution.data?.total ?? d.total}
+            isLoading={attribution.isLoading}
+          />
+        </div>
+
+        <div className="lg:col-span-7 bg-slate-900 border border-slate-800 rounded-md p-4">
+          <h2 className="text-xs font-semibold text-slate-400 mb-2">{t("symbol.trajectory90d")}</h2>
+          <TrajectoryChart
+            data={history.data}
+            threshold={redThreshold}
+            isLoading={history.isLoading}
+          />
+        </div>
+
+        {/* 第三行: Short Iceberg V2 + Divergence */}
+        <div className="lg:col-span-6 bg-slate-900 border border-slate-800 rounded-md p-4">
+          <h2 className="text-xs font-semibold text-slate-400 mb-2">{t("symbol.shortIceberg")}</h2>
+          <ShortIcebergV2
+            series={shortIceberg.data?.series}
+            isLoading={shortIceberg.isLoading}
+          />
+        </div>
+
+        <div className="lg:col-span-6 bg-slate-900 border border-slate-800 rounded-md p-4">
+          <h2 className="text-xs font-semibold text-slate-400 mb-2">{t("symbol.divergence")}</h2>
+          <DivergenceChart
+            data={divergence.data}
+            isLoading={divergence.isLoading}
+          />
+        </div>
+
+        {/* 第四行: Options Heatmap (全宽) */}
+        {optionsV2.data && optionsV2.data.signal_strength !== "LOW" && (
+          <div className="lg:col-span-12 bg-slate-900 border border-slate-800 rounded-md p-4">
+            <div className="flex items-center gap-2 mb-3">
+              <h2 className="text-xs font-semibold text-slate-400">{t("symbol.optionsAnomaly")}</h2>
+              {optionsV2.data.signal_strength === "HIGH" && (
+                <span className="text-[10px] px-1.5 py-0.5 rounded border text-red-400 bg-red-950/30 border-red-800/50">HIGH</span>
+              )}
+              {optionsV2.data.signal_strength === "NORMAL" && (
+                <span className="text-[10px] px-1.5 py-0.5 rounded border text-slate-400 bg-slate-800 border-slate-700">NORMAL</span>
+              )}
+            </div>
+            {/* V2 指标卡片 */}
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-3 text-xs mb-3">
+              <div>
+                <div className="text-slate-500 mb-0.5">PCR</div>
+                <div className="font-mono font-bold text-slate-200">{optionsV2.data.pcr.toFixed(2)}</div>
+                {optionsV2.data.pcr_z_score !== null && (
+                  <div className={`text-[10px] ${optionsV2.data.pcr_extreme ? "text-red-400" : "text-slate-500"}`}>
+                    z={optionsV2.data.pcr_z_score.toFixed(2)}{optionsV2.data.pcr_extreme && ` ${t("symbol.extreme")}`}
+                  </div>
+                )}
+              </div>
+              <div>
+                <div className="text-slate-500 mb-0.5">{t("symbol.putCallVolume")}</div>
+                <div className="font-mono text-slate-300">
+                  {optionsV2.data.pcr_total_put.toLocaleString()} / {optionsV2.data.pcr_total_call.toLocaleString()}
+                </div>
+              </div>
+              <div>
+                <div className="text-slate-500 mb-0.5">{t("symbol.otmAssassin")}</div>
+                <div className={`font-mono font-bold ${optionsV2.data.otm_assassin_count >= 2 ? "text-red-400" : "text-slate-300"}`}>
+                  {optionsV2.data.otm_assassin_count}
+                </div>
+              </div>
+              <div>
+                <div className="text-slate-500 mb-0.5">{t("symbol.gammaCluster")}</div>
+                <div className="font-mono text-slate-300">
+                  {optionsV2.data.gamma_clusters.filter(g => g.is_cluster).length > 0 ? (
+                    <span className="text-amber-300">
+                      {optionsV2.data.gamma_clusters.filter(g => g.is_cluster).map(g => `$${g.strike.toFixed(0)}`).join(", ")}
+                    </span>
+                  ) : (
+                    <span className="text-slate-500">{t("symbol.none")}</span>
+                  )}
+                </div>
+              </div>
+            </div>
+            {/* 合约热力表 */}
+            {optionsV2.data.signal_modules.length > 0 && (
+              <div className="text-[10px] text-slate-500 mb-2">
+                {t("symbol.triggerModules")}: {optionsV2.data.signal_modules.join(" / ")}
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* 第五行: Insider Timeline (全宽) */}
+        <div className="lg:col-span-12 bg-slate-900 border border-slate-800 rounded-md p-4">
+          <InsiderTimeline
+            actions={insiderActions.data}
+            isEtf={isEtf}
+          />
         </div>
       </div>
 
-      <ThreatHistoryChart data={history.data ?? []} threshold={redThreshold} />
-
-      {/* V1.5.9: Options Anomaly V2 指标卡片 */}
-      {optionsV2.data && optionsV2.data.signal_strength !== "LOW" && (
-        <div className="bg-slate-900 border border-slate-800 rounded-md p-6">
-          <h2 className="text-sm font-semibold text-slate-300 mb-4 flex items-center gap-2">
-            期权异动 V2
-            {optionsV2.data.signal_strength === "HIGH" && (
-              <span className="text-xs px-1.5 py-0.5 rounded border text-red-400 bg-red-950/30 border-red-800/50">
-                HIGH
-              </span>
-            )}
-            {optionsV2.data.signal_strength === "NORMAL" && (
-              <span className="text-xs px-1.5 py-0.5 rounded border text-slate-400 bg-slate-800 border-slate-700">
-                NORMAL
-              </span>
-            )}
-          </h2>
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
-            <div>
-              <div className="text-slate-500 text-xs mb-1">PCR</div>
-              <div className="font-mono font-bold text-slate-200">
-                {optionsV2.data.pcr.toFixed(2)}
-              </div>
-              {optionsV2.data.pcr_z_score !== null && (
-                <div className={`text-xs mt-0.5 ${optionsV2.data.pcr_extreme ? "text-red-400" : "text-slate-500"}`}>
-                  z={optionsV2.data.pcr_z_score.toFixed(2)}
-                  {optionsV2.data.pcr_extreme && " 极值"}
-                </div>
-              )}
-            </div>
-            <div>
-              <div className="text-slate-500 text-xs mb-1">Put / Call 成交量</div>
-              <div className="font-mono text-slate-300">
-                {optionsV2.data.pcr_total_put.toLocaleString()} / {optionsV2.data.pcr_total_call.toLocaleString()}
-              </div>
-            </div>
-            <div>
-              <div className="text-slate-500 text-xs mb-1">OTM 刺客合约</div>
-              <div className={`font-mono font-bold ${
-                optionsV2.data.otm_assassin_count >= 2 ? "text-red-400" : "text-slate-300"
-              }`}>
-                {optionsV2.data.otm_assassin_count}
-              </div>
-            </div>
-            <div>
-              <div className="text-slate-500 text-xs mb-1">Gamma 聚集</div>
-              <div className="font-mono text-slate-300">
-                {optionsV2.data.gamma_clusters.filter(g => g.is_cluster).length > 0 ? (
-                  <span className="text-amber-300">
-                    {optionsV2.data.gamma_clusters.filter(g => g.is_cluster).map(g => `$${g.strike.toFixed(0)}`).join(", ")}
-                  </span>
-                ) : (
-                  <span className="text-slate-500">无</span>
-                )}
-              </div>
-            </div>
-          </div>
-          {optionsV2.data.signal_modules.length > 0 && (
-            <div className="mt-3 text-xs text-slate-500">
-              触发模块: {optionsV2.data.signal_modules.join(" / ")}
-            </div>
-          )}
-          {optionsV2.data._cache === "miss" && (
-            <div className="mt-2 text-xs text-amber-500/60">缓存未命中,数据可能延迟</div>
-          )}
-        </div>
-      )}
-
-      <div className="text-xs text-slate-500">
-        数据来源:FINRA + SEC EDGAR + Yahoo Finance。统计异常现象,仅供参考。
+      <div className="text-[10px] text-slate-600">
+        {t("symbol.dataSourceDisclaimer")}
       </div>
 
       <LlmPanel

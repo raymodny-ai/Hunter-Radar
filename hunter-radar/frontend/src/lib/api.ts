@@ -170,6 +170,18 @@ export const api = {
 
 
 
+  // §3.4 内部人交易
+  getInsiderActions: (ticker: string) =>
+    request<Array<{
+      date: string;
+      person_name: string;
+      title: string;
+      direction: "buy" | "sell";
+      shares: number;
+      price_per_share: number;
+      is_c_level: boolean;
+    }>>(`/symbols/${ticker}/insider-actions`),
+
   // §3.1 V1.5.9 Options Anomaly V2(纯 Redis 读,PCR + Gamma + OTM 刺客)
   getOptionsAnomalyV2: (ticker: string) =>
     request<{

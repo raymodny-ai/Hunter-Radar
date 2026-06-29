@@ -137,5 +137,102 @@
   },
   "dataStatus": {
     "label": "数据管道状态"
+  },
+  "symbol": {
+    "stock": "个股",
+    "llmAnalyze": "LLM 分析",
+    "noData": "的 Threat Score 暂未生成(数据积累中)。",
+    "noDataHint": "完整数据需要 EOD 流水线对至少 30 个交易日完成 Threat Score 计算后展示。",
+    "moduleSignals": "模块信号灯",
+    "signalRadar": "四维信号雷达",
+    "attribution": "威胁分溯源",
+    "trajectory90d": "90 日轨迹",
+    "shortIceberg": "做空水位冰山图",
+    "divergence": "量价背离",
+    "optionsAnomaly": "期权异动 V2",
+    "insiderTimeline": "内部人交易",
+    "emaHalflife": "半衰期",
+    "weights": "权重",
+    "extreme": "极值",
+    "putCallVolume": "Put/Call 成交量",
+    "otmAssassin": "OTM 刺客合约",
+    "gammaCluster": "Gamma 聚集",
+    "none": "无",
+    "triggerModules": "触发模块",
+    "dataSourceDisclaimer": "数据来源:FINRA + SEC EDGAR + Yahoo Finance。统计异常现象,仅供参考。"
+  },
+  "screener": {
+    "subtitle": "基于期权异常 / 做空水位 / 量价背离 / 内部交易四维共振评分排序",
+    "noData": "Screener 数据尚未就绪",
+    "tradeDate": "交易日",
+    "scanned": "今日扫描",
+    "emptyData": "暂无数据,可能需要先查询一些股票触发数据采集",
+    "symbol": "代码",
+    "name": "名称",
+    "score": "评分",
+    "signal": "信号",
+    "modules": "活跃模块",
+    "insider": "内部人",
+    "disclaimer": "评分基于 FINRA / SEC EDGAR / Yahoo Finance 公开数据的统计异常,仅供参考。"
+  },
+  "charts": {
+    "attribution": {
+      "total": "总计",
+      "threatScore": "威胁分",
+      "rawScore": "原始分",
+      "weight": "权重",
+      "weighted": "加权分",
+      "noData": "溯源数据积累中",
+      "ariaLabel": "威胁分贡献度瀑布图"
+    },
+    "radar": {
+      "signalArea": "信号覆盖面积",
+      "noData": "雷达数据积累中",
+      "ariaLabel": "四维信号雷达图"
+    },
+    "trajectory": {
+      "ema": "EMA 后分",
+      "raw": "原始分",
+      "lifecycle": "生命周期",
+      "threshold": "阈值",
+      "noData": "轨迹数据积累中",
+      "ariaLabel": "90 日 Threat Score 轨迹图"
+    },
+    "options": {
+      "contract": "合约",
+      "notional": "名义金额",
+      "flags": "标记",
+      "doomPut": "末日Put",
+      "catalyst": "已知催化剂",
+      "noData": "暂无期权异动数据"
+    },
+    "iceberg": {
+      "shortRatio": "做空占比",
+      "atsPct": "暗池占比",
+      "noData": "做空水位数据积累中",
+      "ariaLabel": "做空水位冰山图"
+    },
+    "divergence": {
+      "price": "价格归一化",
+      "short": "做空量回归",
+      "state": "背离状态",
+      "confirmed": "已确认背离",
+      "rising": "背离上升中",
+      "none": "无背离",
+      "noData": "量价背离数据积累中",
+      "ariaLabel": "量价背离双轨图"
+    },
+    "insider": {
+      "title": "内部人交易时间轴",
+      "etfDisabled": "ETF 不适用",
+      "noData": "暂无内部人交易记录",
+      "date": "日期",
+      "direction": "方向",
+      "shares": "数量",
+      "price": "均价",
+      "sell": "减持",
+      "buy": "增持",
+      "cLevel": "C-Level 高管"
+    }
   }
 }

@@ -8,6 +8,7 @@ import "./i18n";
 import { queryClient } from "./lib/queryClient";
 import { initSentry } from "./lib/sentry";
 import { router } from "./router";
+import "./lib/echarts-setup"; // M2: 注册 ECharts tree-shaking 组件
 import { registerHunterTheme } from "./lib/theme/hunter-dark";
 
 // FE-111: 在渲染前注册 ECharts 暗黑主题
