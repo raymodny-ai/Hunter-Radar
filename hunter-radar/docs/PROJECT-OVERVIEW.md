@@ -167,7 +167,7 @@ hunter-radar/
 │
 ├── backend/                   # 后端(FastAPI + ETL)
 │   ├── app/
-│   │   ├── api/               # REST 端点(21 个模块)
+│   │   ├── api/               # REST 端点(20 个模块)
 │   │   │   ├── admin.py       # Admin ETL/Backtest/Webhook
 │   │   │   ├── alerts.py      # 预警规则 CRUD
 │   │   │   ├── analytics.py   # 分析事件
@@ -186,6 +186,7 @@ hunter-radar/
 │   │   │   ├── regime.py      # 市场门控
 │   │   │   ├── regime_timeline.py # 市场切换时间轴(V1.6.0)
 │   │   │   ├── screener.py    # 猎物榜单
+│   │   │   ├── subscriptions.py # 订阅端点(已停用,返回 free_for_all)
 │   │   │   └── symbols.py     # 标的详情/Threat Score/期权/做空/背离
 │   │   ├── core/
 │   │   │   ├── config.py      # 全局配置(Pydantic Settings)
@@ -193,13 +194,13 @@ hunter-radar/
 │   │   │   └── redis_client.py # Redis 客户端
 │   │   ├── models/            # ORM 模型
 │   │   ├── schemas/           # Pydantic DTO
-│   │   ├── services/          # 业务逻辑(27 个服务)
+│   │   ├── services/          # 业务逻辑(26 个服务)
 │   │   └── main.py            # FastAPI 应用入口
 │   ├── dags/                  # Airflow DAG
 │   │   ├── hunter_radar_eod.py # 每日 EOD 主流水线
 │   │   ├── ats_cron.py        # ATS 暗池定时任务
 │   │   └── options_cron.py    # 期权轮询定时任务
-│   ├── etl/                   # ETL 模块(26 个文件)
+│   ├── etl/                   # ETL 模块(25 个文件)
 │   │   ├── pipeline.py        # 集中编排器
 │   │   ├── market_data_provider.py # 多源冗余框架(V1.6.0)
 │   │   ├── validation.py      # 数据校验层(V1.6.0)
@@ -231,7 +232,7 @@ hunter-radar/
 │   ├── src/
 │   │   ├── components/
 │   │   │   ├── common/        # 通用组件(9 个)
-│   │   │   └── radar/         # 雷达专用组件(7 个)
+│   │   │   └── radar/         # 雷达专用组件(6 个)
 │   │   ├── features/          # 自定义 Hooks(8 个)
 │   │   ├── i18n/              # 国际化(zh-CN)
 │   │   ├── lib/               # 工具库(api/queryClient/sentry)
@@ -244,7 +245,7 @@ hunter-radar/
 │   └── package.json
 │
 ├── infra/
-│   └── docker-compose.yml     # 基础设施编排(7 个服务)
+│   └── docker-compose.yml     # 基础设施编排(6 个服务)
 │
 ├── docker/
 │   └── control.sh             # Docker 控制脚本
@@ -580,8 +581,12 @@ MarketDataProvider (ABC 抽象接口)
 | Method | Path | Tag | 说明 |
 |--------|------|-----|------|
 | GET | `/api/v1/feature-flags` | feature-flags | 灰度发布 flag 状态 |
-| GET | `/api/v1/events/eight-k` | events | 8-K Item 8.01 重大事件流 |
-| POST | `/api/v1/push/subscribe` | push | Web Push 订阅 |
+| GET | `/api/v1/events/8k` | events | 8-K Item 8.01 重大事件流 |
+| GET | `/api/v1/events/8k/{ticker}` | events | 单标的 8-K 事件 |
+| GET | `/api/v1/push/vapid-public-key` | push | VAPID 公钥(供前端订阅) |
+| POST | `/api/v1/push/subscriptions` | push | Web Push 新增/更新订阅 |
+| GET | `/api/v1/push/subscriptions` | push | 当前用户订阅列表 |
+| DELETE | `/api/v1/push/subscriptions/{id}` | push | 取消 Web Push 订阅 |
 | GET | `/api/v1/logs/stream` | log-stream | SSE 实时日志流 |
 
 ### 8.10 LLM 分析
@@ -629,7 +634,7 @@ MarketDataProvider (ABC 抽象接口)
 | `/screener` | `routes/screener.tsx` | 每日猎物榜单(Top 50) |
 | `/basket` | `routes/basket.tsx` | 自选篮子管理 |
 | `/alerts` | `routes/alerts.tsx` | 预警规则管理 |
-| `/subscribe` | `routes/subscribe.tsx` | 订阅升级(Free → Pro) |
+| `/subscribe` | `routes/subscribe.tsx` | 订阅升级页面(文件存在,未注册到路由树) |
 
 ### 9.3 核心组件
 
@@ -704,7 +709,7 @@ MarketDataProvider (ABC 抽象接口)
 # 一键启动所有服务
 cd infra && docker compose up -d
 
-# 服务清单(7 个):
+# 服务清单(6 个):
 # - postgres:5432        (PostgreSQL 16)
 # - redis:6379           (Redis 7)
 # - airflow-webserver:8080 (Airflow UI)
@@ -781,7 +786,6 @@ docker/control.sh status   # 查看服务状态
 
 | 变量 | 默认值 | 说明 |
 |------|--------|------|
-| `ALPHA_VANTAGE_API_KEY` | "" | 备份数据源 API Key |
 | `DATA_PROVIDER_FALLBACK_ENABLED` | true | 是否启用备份源降级 |
 
 ---
@@ -793,7 +797,7 @@ docker/control.sh status   # 查看服务状态
 ```bash
 # 后端
 cd backend
-python -m venv .venv && .venv\Scripts\activate
+python -m venv .venv; .venv\Scripts\activate
 pip install -e ".[dev]"
 uvicorn app.main:app --reload --port 8000
 
@@ -826,11 +830,12 @@ pnpm dev      # http://localhost:5173
 ### 12.4 ETL CLI 运行
 
 ```bash
-# 指定日期运行
+# 指定日期运行(默认当日)
 python -m etl.pipeline 2026-06-15
 
-# 跳过 Yahoo / SEC
-python -m etl.pipeline 2026-06-15 --skip-yahoo --skip-sec
+# Python 中编程式调用(支持 skip_yahoo / skip_sec 参数)
+from etl.pipeline import run_daily_pipeline
+report = await run_daily_pipeline(date(2026, 6, 15), skip_sec=True)
 ```
 
 ### 12.5 数据库初始化
