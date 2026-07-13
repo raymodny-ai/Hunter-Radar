@@ -18,6 +18,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.config import settings
 from app.core.database import get_session
 from app.core.redis_client import cache_or_set_json
+import structlog
+log = structlog.get_logger(__name__)
 from app.models import Symbol
 
 router = APIRouter()
@@ -124,9 +126,15 @@ async def _compute_screener(
                 rows=rows,
                 total_scanned=total_scanned,
             )
-        except Exception:  # noqa: BLE001
-            # 物化视图不存在或查询失败 → 降级到原查询
-            pass
+        except Exception as _mv_err:  # noqa: BLE001
+            # 物化视图不存在或查询失败 → rollback session 后降级到原查询。
+            # 重要: 不 rollback 会导致 asyncpg 事务状态 abort,
+            # 后续 SQL 全部 InFailedSQLTransactionError → 500 而非 200
+            try:
+                await session.rollback()
+            except Exception:  # noqa: BLE001
+                pass
+            log.warning("screener.mv_fallback error=%s", str(_mv_err)[:200])
 
     # 2) 联 symbol_master 取 name(原查询路径)
     sym = Symbol.__table__
