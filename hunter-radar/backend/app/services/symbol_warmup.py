@@ -475,3 +475,144 @@ async def schedule_warmup(ticker: str) -> dict[str, Any]:
 
 # 持有后台 task 引用,避免 GC
 _TASKS: set[asyncio.Task] = set()
+
+
+# ============================================================
+# V1.7.6 — 串行调度器 (dispatcher)
+# ============================================================
+# 原 schedule_warmup 是 fire-and-forget: 每个 ticker 单独抢锁起 task。
+# 这意味着 wipe_and_rehydrate 一次性 POST 31 个 ticker 时:
+#   - 第一个 ticker (AMD) 抢到锁跑完, 锁释放
+#   - 剩下 30 个 ticker 的 task 已经创建但 blocked 在 _acquire_lock,
+#     当初 schedule_warmup 返回时它们的 lock 没抢到所以直接返 already_running
+#     (实际根本没在排队)
+#
+# 修复: 用 Redis list 当 FIFO 队列, 单一 dispatcher loop 串行 pop
+# 唯一约束: 每个 ticker 严格串行, 避免 FINRA/yfinance 限速撞墙
+#
+# Key 约定:
+#   warmup:queue          — Redis list (RPUSH 入, BLPOP 出)
+#   warmup:queue:active   — string 当前正在跑的 ticker (debug)
+
+WARMUP_QUEUE_KEY = "warmup:queue"
+WARMUP_ACTIVE_KEY = "warmup:queue:active"
+
+
+async def enqueue_warmup(ticker: str) -> bool:
+    """把 ticker 入队 (RPUSH warmup:queue)。
+
+    幂等: 同 ticker 已在队列中时跳过 (避免重复入队)。
+    返回 True=成功入队, False=已在队列中。
+    """
+    t = ticker.strip().upper()
+    if not t:
+        return False
+    # 检查重复
+    items = await redis_client.lrange(WARMUP_QUEUE_KEY, 0, -1)
+    if t in (s.decode() if isinstance(s, bytes) else s for s in items):
+        log.info("warmup.enqueue.skip duplicate", extra={"ticker": t})
+        return False
+    # 检查当前正在跑的
+    active = await redis_client.get(WARMUP_ACTIVE_KEY)
+    if active:
+        active_str = active.decode() if isinstance(active, bytes) else active
+        if active_str == t:
+            log.info("warmup.enqueue.skip active", extra={"ticker": t})
+            return False
+    await redis_client.rpush(WARMUP_QUEUE_KEY, t)
+    log.info("warmup.enqueue.ok", extra={"ticker": t})
+    return True
+
+
+async def enqueue_many_warmup(tickers: list[str]) -> dict[str, int]:
+    """批量入队, 返 {enqueued, skipped}。"""
+    enqueued = 0
+    skipped = 0
+    for t in tickers:
+        if await enqueue_warmup(t):
+            enqueued += 1
+        else:
+            skipped += 1
+    return {"enqueued": enqueued, "skipped": skipped}
+
+
+async def _dispatcher_loop() -> None:
+    """常驻 dispatcher: 从 warmup:queue 逐个 pop, 调 schedule_warmup 真正执行。
+
+    设计:
+    - 每轮: BLPOP 队列 (阻塞 5s), 拿到 ticker 调 schedule_warmup
+    - schedule_warmup 内部 _acquire_lock + 启动 _runner task
+    - _runner 跑完会 _release_lock → 我们在 finally 等锁释放才下一轮
+    - 后台 task 失败/异常 不影响 dispatcher 主循环
+    """
+    log.info("warmup.dispatcher.start")
+    while True:
+        try:
+            # BLPOP 5s timeout (允许优雅退出检测)
+            res = await redis_client.blpop(WARMUP_QUEUE_KEY, timeout=5)
+            if res is None:
+                # timeout, 继续
+                continue
+            _key, raw_t = res
+            t = raw_t.decode() if isinstance(raw_t, bytes) else raw_t
+            t = t.strip().upper()
+            if not t:
+                continue
+
+            log.info("warmup.dispatcher.dispatch", extra={"ticker": t})
+            await redis_client.set(WARMUP_ACTIVE_KEY, t)
+
+            try:
+                # schedule_warmup 返回 dict; status 可能是 already_running (race)
+                result = await schedule_warmup(t)
+                log.info(
+                    "warmup.dispatcher.scheduled",
+                    extra={"ticker": t, "status": result.get("status")},
+                )
+
+                # 等锁释放 — 轮询直到 lock 消失, 然后下一轮
+                # 单 ticker 跑完时间不可预测 (FINRA 90 天可能 5 min),
+                # 这里用 polling 而不是 sleep 避免长 sleep 浪费
+                waited = 0.0
+                while True:
+                    locked = await redis_client.exists(
+                        WARMUP_LOCK_TPL.format(ticker=t)
+                    )
+                    if not locked:
+                        break
+                    await asyncio.sleep(2.0)
+                    waited += 2.0
+                    if waited > 1800.0:  # 30 min 兜底, 防 ticker 真卡死时 dispatcher 也卡死
+                        log.warning(
+                            "warmup.dispatcher.lock.timeout",
+                            extra={"ticker": t, "waited_sec": waited},
+                        )
+                        # 强行释放锁, 留给下个 ticker (业务侧会重试)
+                        await redis_client.delete(
+                            WARMUP_LOCK_TPL.format(ticker=t)
+                        )
+                        break
+                log.info(
+                    "warmup.dispatcher.next",
+                    extra={"ticker": t, "waited_sec": waited},
+                )
+            finally:
+                await redis_client.delete(WARMUP_ACTIVE_KEY)
+
+        except asyncio.CancelledError:
+            log.info("warmup.dispatcher.cancelled")
+            raise
+        except Exception as e:  # noqa: BLE001
+            # exc_info=True 让 stdlib formatter 渲染 traceback
+            # extra={...} 不会在默认 formatter 里出现
+            log.exception("warmup.dispatcher.error: %s", e)
+            await asyncio.sleep(5.0)  # 防 tight loop 撞墙
+
+
+async def start_dispatcher() -> asyncio.Task:
+    """在 FastAPI startup 里调, 起后台 dispatcher task。"""
+    task = asyncio.create_task(_dispatcher_loop(), name="warmup-dispatcher")
+    _TASKS.add(task)
+    task.add_done_callback(_TASKS.discard)
+    log.info("warmup.dispatcher.task.created")
+    return task

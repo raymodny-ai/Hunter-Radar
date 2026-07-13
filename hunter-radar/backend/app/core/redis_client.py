@@ -16,6 +16,14 @@ _client: redis.Redis = redis.from_url(
     encoding="utf-8",
     decode_responses=True,
     max_connections=50,
+    # V1.7.6: BLPOP 等阻塞命令需要 socket_timeout, 否则默认 None
+    # 在 idle 30s+ 后会被中间网络/socket keepalive 关闭, 报
+    # 'Timeout reading from 127.0.0.1:6379'。30s 足够覆盖 dispatcher 的 5s BLPOP
+    socket_timeout=30.0,
+    socket_connect_timeout=10.0,
+    # V1.7.6: health_check_interval 让连接空闲一段时间后自动 PING 探活,
+    # 避免 BLPOP 拿到 stale connection 后一执行就 timeout
+    health_check_interval=15,
 )
 
 
@@ -42,6 +50,47 @@ class RedisClient:
 
     async def expire(self, key: str, ttl: int) -> None:
         await self._c.expire(key, ttl)
+
+    # ---- List / Key (V1.7.6 warmup dispatcher 队列需要) ----
+    async def rpush(self, key: str, value: str) -> int:
+        """List 右推 (RPUSH),返新 list 长度。"""
+        return int(await self._c.rpush(key, value))
+
+    async def lpush(self, key: str, value: str) -> int:
+        """List 左推 (LPUSH),返新 list 长度。"""
+        return int(await self._c.lpush(key, value))
+
+    async def lrange(self, key: str, start: int, end: int) -> list[str]:
+        """List 范围 (LRANGE start end),end=-1 取到末尾。"""
+        res = await self._c.lrange(key, start, end)
+        return list(res or [])
+
+    async def blpop(
+        self, key: str, timeout: int = 0
+    ) -> tuple[str, str] | None:
+        """阻塞左弹 (BLPOP)。timeout 秒后返 None。
+
+        redis-py async 返 Awaitable[tuple[bytes, bytes] | None],
+        包装为 str 元组保持上层一致。
+        """
+        res = await self._c.blpop(key, timeout=timeout)
+        if res is None:
+            return None
+        k, v = res
+        # decode_responses=True 已开,直接 str
+        return (str(k), str(v))
+
+    async def exists(self, key: str) -> bool:
+        """key 是否存在 (EXISTS)。"""
+        return bool(await self._c.exists(key))
+
+    async def delete(self, *keys: str) -> int:
+        """删 1+ key,返删除数量。"""
+        return int(await self._c.delete(*keys))
+
+    async def llen(self, key: str) -> int:
+        """List 长度 (LLEN)。"""
+        return int(await self._c.llen(key))
 
     async def close(self) -> None:
         await self._c.aclose()

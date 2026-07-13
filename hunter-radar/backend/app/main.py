@@ -222,6 +222,15 @@ async def on_startup() -> None:
     except Exception as e:  # noqa: BLE001
         log.warning("redis.unreachable", error=str(e))
 
+    # V1.7.6: 启动 warmup dispatcher (串行调度, 避免 31 ticker 并发撞墙)
+    try:
+        from app.services.symbol_warmup import start_dispatcher
+
+        await start_dispatcher()
+        log.info("warmup.dispatcher.startup.ok")
+    except Exception as e:  # noqa: BLE001
+        log.warning("warmup.dispatcher.startup.fail", error=str(e))
+
 
 @app.on_event("shutdown")
 async def on_shutdown() -> None:

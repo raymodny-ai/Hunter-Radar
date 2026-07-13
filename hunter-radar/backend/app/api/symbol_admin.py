@@ -26,6 +26,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.database import get_session
 from app.models import Symbol
 from app.services.symbol_warmup import (
+    enqueue_warmup,
     get_warmup_status,
     schedule_warmup,
 )
@@ -90,7 +91,19 @@ async def create_symbol(
 
     warmup_payload: dict = {}
     if body.start_warmup:
-        warmup_payload = await schedule_warmup(sym.ticker)
+        # V1.7.6: 入队而非直接 schedule, 由 dispatcher 串行执行避免 31 ticker
+        # 同时拉 FINRA/yfinance 触发限速撞墙。已在跑/已入队的 ticker 走幂等跳过。
+        enqueued = await enqueue_warmup(sym.ticker)
+        # 仍然查一次当前状态返回 (可能 running/already_running/scheduled)
+        existing = await get_warmup_status(sym.ticker)
+        if existing is None:
+            existing = {
+                "status": "queued" if enqueued else "skipped",
+                "message": "queued for dispatch" if enqueued else "already in queue",
+            }
+        warmup_payload = existing
+        # 给前端一个明确字段: 队列里 vs 已触发
+        warmup_payload = {**existing, "enqueued": enqueued}
 
     return SymbolCreateResponse(
         ticker=sym.ticker,
@@ -141,8 +154,13 @@ async def rerun_warmup(ticker: str, session: AsyncSession = Depends(get_session)
             status_code=404,
             detail={"message": "symbol not found, call POST /symbols first", "ticker": t},
         )
-    payload = await schedule_warmup(t)
-    return {"ticker": t, "warmup": payload}
+    # V1.7.6: 入队由 dispatcher 串行, 避免与正在跑的 ticker 抢锁失败
+    enqueued = await enqueue_warmup(t)
+    payload = await get_warmup_status(t) or {
+        "status": "queued" if enqueued else "skipped",
+        "message": "queued for dispatch" if enqueued else "already in queue",
+    }
+    return {"ticker": t, "warmup": {**payload, "enqueued": enqueued}}
 
 
 @router.get(
