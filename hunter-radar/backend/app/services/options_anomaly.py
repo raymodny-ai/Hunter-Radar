@@ -130,6 +130,8 @@ class SignalStrength(str, Enum):
     HIGH = "HIGH"
     NORMAL = "NORMAL"
     LOW = "LOW"
+    # V1.7.4: 区别于 NORMAL (history 不足,需要后续 ETL 累积)
+    INSUFFICIENT = "INSUFFICIENT"
 
 
 # ---- 2.2 动态基准 ----

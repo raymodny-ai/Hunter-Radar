@@ -45,10 +45,10 @@ async def download_finra_short_daily(trade_date: date) -> bytes:
     注意:FINRA 在 2021-03 后改为统一一个 CSV,字段含 Date|Symbol|ShortVolume|NonShortVolume
     本实现先按统一 CSV 处理;若 FINRA 调整,改本函数。
     """
-    url = settings.finra_short_url
+    url = settings.finra_short_url.format(trade_date=trade_date.strftime("%Y%m%d"))
     headers = {
         "User-Agent": settings.sec_user_agent,  # FINRA 同样要求标识
-        "Accept": "text/csv,*/*",
+        "Accept": "text/plain,*/*",
     }
     async with httpx.AsyncClient(timeout=30.0, headers=headers) as client:
         r = await client.get(url)
@@ -57,10 +57,14 @@ async def download_finra_short_daily(trade_date: date) -> bytes:
 
 
 def parse_finra_short_csv(content: bytes) -> list[ShortVolumeRow]:
-    """解析 FINRA 公开 CSV,过滤为标准结构。
+    """解析 FINRA 公开 Consolidated NMS CSV。
 
-    字段(根据 FINRA 实际格式):
-        Date|Symbol|ShortVolume|NonShortVolume
+    实际格式(2024+):
+        Date|Symbol|ShortVolume|ShortExemptVolume|TotalVolume|Market
+        20260626|AMD|6230039.88|5086|12197207.24|B,Q,N
+
+    ShortVolume / TotalVolume 是小数(可除尽)。ShortExemptVolume 是整数。
+    返回标准 ShortVolumeRow(short_volume=ShortVolume, non_short_volume=TotalVolume-ShortVolume)。
     """
     text = content.decode("utf-8", errors="replace")
     reader = csv.DictReader(io.StringIO(text), delimiter="|")
@@ -69,9 +73,10 @@ def parse_finra_short_csv(content: bytes) -> list[ShortVolumeRow]:
         try:
             d = date.fromisoformat(row["Date"])
             sym = row["Symbol"].strip().upper()
-            sv = int(row["ShortVolume"].replace(",", ""))
-            nsv = int(row["NonShortVolume"].replace(",", ""))
-        except (KeyError, ValueError):
+            sv = int(float(row["ShortVolume"]))  # 6.23e6
+            tv = int(float(row["TotalVolume"]))
+            nsv = max(tv - sv, 0)
+        except (KeyError, ValueError, TypeError):
             continue
         if not sym or sv < 0 or nsv < 0:
             continue

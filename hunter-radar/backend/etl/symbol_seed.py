@@ -5,6 +5,7 @@ from __future__ import annotations
 import csv
 import logging
 import os
+from datetime import date
 from pathlib import Path
 
 from sqlalchemy import select
@@ -51,6 +52,81 @@ async def seed_defaults(session: AsyncSession) -> int:
     result = await session.execute(stmt)
     await session.commit()
     return result.rowcount or 0
+
+
+async def upsert_symbol(
+    ticker: str,
+    *,
+    name: str | None = None,
+    sym_type: str = "stock",
+    exchange: str | None = None,
+    is_universe: bool = False,
+    start_warmup: bool = True,
+    session: AsyncSession | None = None,
+) -> tuple[Symbol, bool]:
+    """注册新标的到 symbol_master,自动设 warmup_started_at。
+
+    Args:
+        ticker: 标的代码(自动 uppercase)
+        name: 显示名,缺省 = ticker
+        sym_type: stock / etf / index
+        exchange: 交易所,缺省 = None(后续 ETL 拉数时不依赖)
+        is_universe: 是否纳入 screener 池(默认 False,新加标的只观测不入池)
+        start_warmup: True 则设 warmup_started_at=今天,触发后台 ETL
+        session: 外部传入的 session(用于事务复用);None 则自管
+
+    Returns:
+        (Symbol, created) - created=True 表示本次新增,False 表示已存在
+    """
+    from app.core.database import AsyncSessionLocal as _ASL
+
+    t = ticker.strip().upper()
+    if not t or len(t) > 10:
+        raise ValueError(f"invalid ticker: {ticker!r}")
+
+    own_session = session is None
+    if own_session:
+        session = _ASL()
+
+    try:
+        rs = await session.execute(select(Symbol).where(Symbol.ticker == t))
+        existing = rs.scalar_one_or_none()
+        if existing is not None:
+            # 已存在:如果还没有 warmup_started_at 且要求 start_warmup,则补设
+            if start_warmup and existing.warmup_started_at is None:
+                existing.warmup_started_at = date.today()
+                await session.commit()
+                log.info("upsert_symbol.warmup_started", ticker=t)
+            return existing, False
+
+        # 新增
+        payload = {
+            "ticker": t,
+            "name": name or t,
+            "type": sym_type,
+            "exchange": exchange,
+            "is_active": True,
+            "is_universe": is_universe,
+            "warmup_started_at": date.today() if start_warmup else None,
+            "metadata_json": {},
+        }
+        stmt = (
+            pg_insert(Symbol)
+            .values(**payload)
+            .on_conflict_do_nothing(index_elements=["ticker"])
+            .returning(Symbol.ticker)
+        )
+        rs2 = await session.execute(stmt)
+        await session.commit()
+        inserted = rs2.scalar_one_or_none() is not None
+        # 重新读(RETURNING 不一定带回完整行)
+        rs3 = await session.execute(select(Symbol).where(Symbol.ticker == t))
+        sym = rs3.scalar_one()
+        log.info("upsert_symbol.created", ticker=t, started_warmup=start_warmup)
+        return sym, inserted
+    finally:
+        if own_session:
+            await session.close()
 
 
 async def main() -> None:

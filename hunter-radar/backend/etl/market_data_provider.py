@@ -131,7 +131,8 @@ class YFinanceProvider(MarketDataProvider):
 
         await self._limiter.acquire()
         ticker = yf.Ticker(symbol)
-        expirations: list[str] = await asyncio.to_thread(ticker.options)
+        # yfinance Ticker.options 是 property(返回 tuple),不是 method
+        expirations: tuple[str, ...] = await asyncio.to_thread(lambda: ticker.options)
         out: list[OptionContract] = []
         for exp in expirations:
             await self._limiter.acquire()
@@ -148,8 +149,8 @@ class YFinanceProvider(MarketDataProvider):
                             last_price=_safe_float(row.get("lastPrice")),
                             bid=_safe_float(row.get("bid")),
                             ask=_safe_float(row.get("ask")),
-                            volume=int(row.get("volume", 0) or 0),
-                            open_interest=int(row.get("openInterest", 0) or 0),
+                            volume=_safe_int(row.get("volume")),
+                            open_interest=_safe_int(row.get("openInterest")),
                             implied_vol=_safe_float(row.get("impliedVolatility")),
                             in_the_money=bool(row.get("inTheMoney", False)),
                         )
@@ -385,3 +386,98 @@ def _safe_float(v) -> float | None:
         return float(v)
     except (TypeError, ValueError):
         return None
+
+
+def _safe_int(v) -> int:
+    """yfinance 的 volume/openInterest 是 float(可 NaN),安全转为 int。"""
+    try:
+        if v is None or (isinstance(v, float) and v != v):  # NaN
+            return 0
+        return int(v)
+    except (TypeError, ValueError):
+        return 0
+
+
+def _yfinance_info(ticker: str) -> dict:
+    """轻量查 ticker info 用于 lookup 端点(autocomplete)。
+
+    Returns: dict with longName/shortName/quoteType/exchange, or {} on fail.
+    Blocking 调用, 应当用 asyncio.to_thread 包装。
+    """
+    import yfinance as yf
+
+    t = yf.Ticker(ticker)
+    try:
+        info = t.info or {}
+    except Exception:
+        info = {}
+    if not info:
+        # yfinance 某些版本 0.2.x 后空 ticker info 返 {} 不再 fast_info
+        try:
+            fi = t.fast_info or {}
+            if fi:
+                return {
+                    "longName": ticker,
+                    "shortName": ticker,
+                    "quoteType": "EQUITY",
+                    "exchange": (fi.get("exchange") or ""),
+                }
+        except Exception:
+            pass
+        return {}
+    return {
+        "longName": info.get("longName") or info.get("shortName") or ticker,
+        "shortName": info.get("shortName") or ticker,
+        "quoteType": info.get("quoteType", "EQUITY"),
+        "exchange": info.get("exchange", ""),
+    }
+
+
+async def fetch_options_recent(symbol: str, max_expirations: int = 3, max_dte_days: int = 60) -> list:
+    """轻量 options 拉数(warmup 用): 只拉最近 N 个 expiration, 限 DTE。
+
+    Returns:
+        list[OptionContract]
+    """
+    import yfinance as yf
+
+    t = yf.Ticker(symbol)
+    expirations = await asyncio.to_thread(lambda: t.options) or ()
+    # 按 DTE 过滤 + 取前 max_expirations
+    today = date.today()
+    chosen: list[str] = []
+    for exp in expirations:
+        try:
+            d = date.fromisoformat(exp)
+        except Exception:
+            continue
+        if (d - today).days <= max_dte_days:
+            chosen.append(exp)
+        if len(chosen) >= max_expirations:
+            break
+
+    out: list = []
+    for exp in chosen:
+        try:
+            chain = await asyncio.to_thread(t.option_chain, exp)
+        except Exception:
+            continue
+        for df, right in [(chain.calls, "C"), (chain.puts, "P")]:
+            for _, row in df.iterrows():
+                out.append(
+                    OptionContract(
+                        contract=row.get("contractSymbol", ""),
+                        underlying=symbol,
+                        expiry=date.fromisoformat(exp),
+                        strike=float(row["strike"]),
+                        right=right,
+                        last_price=_safe_float(row.get("lastPrice")),
+                        bid=_safe_float(row.get("bid")),
+                        ask=_safe_float(row.get("ask")),
+                        volume=_safe_int(row.get("volume")),
+                        open_interest=_safe_int(row.get("openInterest")),
+                        implied_vol=_safe_float(row.get("impliedVolatility")),
+                        in_the_money=bool(row.get("inTheMoney", False)),
+                    )
+                )
+    return out

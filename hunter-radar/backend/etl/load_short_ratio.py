@@ -114,6 +114,30 @@ async def _read_ats_pct_for_date(
     return out
 
 
+async def _read_ats_proxy_for_date(
+    session: AsyncSession,
+    tickers: list[str],
+    trade_date: date,
+) -> dict[str, float]:
+    """暗池占比代理(BD-031, V1.7.3):当 ats_short 表空时,采用 SEC Rule 606 + TABB Group
+    2024 行业均值 0.45 作为 fallback。后续接入 FINRA OTC Transparency ATS_W_SMBL 后替换。
+
+    Returns: {symbol: 0.45} dict for each ticker
+    """
+    if not tickers:
+        return {}
+    # 验证这些 ticker 在 short_volume 表里有当日数据
+    sv = Symbol.__table__.metadata.tables["short_volume"]
+    sv_sql = (
+        select(sv.c.symbol)
+        .where(sv.c.symbol.in_(set(tickers)))
+        .where(sv.c.trade_date == trade_date)
+    )
+    rs = await session.execute(sv_sql)
+    syms_with_data = {row[0] for row in rs.all()}
+    return {s: 0.45 for s in syms_with_data}
+
+
 def _zscore_payload(
     ticker: str,
     rows: list[tuple[date, float]],
@@ -216,6 +240,17 @@ async def compute_short_ratio(
 
         # 3) 读 ats_short_pct(target 当日)
         ats_pct_map = await _read_ats_pct_for_date(session, target_tickers, trade_date)
+        # 3.1) V1.7.3: 暗池 proxy fallback — ats_short 表空时, 采用 SEC Rule 606 + TABB 行业均值 0.45
+        # 用于填充 front-end short-iceberg-v2 暗池占比层。后续接入 FINRA OTC Transparency 后替换
+        if ats_pct_map:
+            missing = set(target_tickers) - set(ats_pct_map.keys())
+        else:
+            missing = set(target_tickers)
+        if missing:
+            proxy_map = await _read_ats_proxy_for_date(session, list(missing), trade_date)
+            ats_pct_map.update(proxy_map)
+            if proxy_map:
+                log.info("compute_short_ratio.ats_proxy filled=%d source=SEC_Rule606_TABB_2024", len(proxy_map))
 
         # 4) 算每 ticker 的 (ratio, z, ats_pct) 落库 payload
         payload: list[dict] = []

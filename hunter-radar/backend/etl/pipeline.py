@@ -19,6 +19,12 @@
 """
 from __future__ import annotations
 
+# 触发 stdlib logger kwargs 兼容垫片(etl/*.py 用 structlog 风格 log.info("foo", k=v))
+try:
+    import app.main  # noqa: F401  (副作用: 注册 _patch_logger_log())
+except Exception:
+    pass
+
 import logging
 from dataclasses import dataclass, field
 from datetime import date
@@ -163,42 +169,11 @@ async def run_daily_pipeline(
         await mark_failed(trade_date, "finra", error=str(e))
 
     # ---- 3) ATS 周报(M2 接真实 CSV, V1.5.9 加 fallback 爬虫)----
+    # 注意:FINRA Daily Short Volume 不是 ATS Transparency Data(后者是周报制含 venue_pool)。
+    # 此阶段还无 ATS 周报源,跳过 load_ats_short,短仓比只用 FINRA daily。
     try:
-        ats_rows = await finra_run(trade_date)  # 主源尝试
-        if ats_rows:
-            # 主源成功
-            res_ats = await load_ats_short(ats_rows)
-            await mark_ready(
-                trade_date,
-                "finra_ats",
-                detail={"attempted": res_ats.attempted, "inserted": res_ats.inserted},
-            )
-            report.stage("load_ats_short", attempted=res_ats.attempted, inserted=res_ats.inserted, source="finra_ats")
-        else:
-            # 主源 null → 触发 fallback
-            log.info("[ATS] 主源返回空,触发 fallback 爬虫")
-            from etl.ats_scraper import fetch_ats_data_fallback, load_ats_fallback, check_fallback_streak
-
-            scraper = await fetch_ats_data_fallback(trade_date=trade_date)
-            if scraper.rows:
-                res_fb = await load_ats_fallback(scraper.rows)
-                await mark_ready(
-                    trade_date,
-                    "ats_fallback",
-                    detail={"attempted": res_fb.attempted, "inserted": res_fb.inserted},
-                )
-                report.stage("load_ats_short", attempted=res_fb.attempted, inserted=res_fb.inserted, source="ats_fallback")
-                # 连续降级检测
-                streak = await check_fallback_streak(trade_date)
-                if streak >= 3:
-                    log.warning(
-                        "[OPS] ATS 主数据源连续 %d 天 fallback! 请检查供应商 API 状态",
-                        streak,
-                    )
-            else:
-                from etl.refresh_data_status import mark_pending
-                await mark_pending(trade_date, "ats_fallback", reason="主源和 fallback 均无数据")
-                report.stage("load_ats_short", status="pending", source="none")
+        report.stage("load_ats_short", status="skipped", reason="no ATS weekly source yet")
+        await mark_ready(trade_date, "finra_ats", detail={"status": "skipped"})
     except Exception as e:  # noqa: BLE001
         report.add_error("load_ats_short", str(e))
 
@@ -256,8 +231,22 @@ async def run_daily_pipeline(
 
             # V1.5.9: PCR + Gamma 聚集 + OTM 刺客
             from etl.load_options_chain import compute_pcr_gamma, warm_options_cache
+            from app.core.database import AsyncSessionLocal
+            from sqlalchemy import select
+            from app.models import Symbol
 
-            pg_results = await compute_pcr_gamma(trade_date)
+            # V1.7.5.2: pipeline 默认只算 is_universe=True,这里改拿所有 options_chain 当天有 contracts 的 tickers.
+            # 不限定 universe 因为 warm_options_cache 需要推全部 Redis keys(用户查询的 ticker 不一定 in universe)
+            options_table = Symbol.__table__.metadata.tables["options_chain"]
+            async with AsyncSessionLocal() as _opt_sess:
+                _rs = await _opt_sess.execute(
+                    select(options_table.c.symbol)
+                    .where(options_table.c.trade_date == trade_date)
+                    .distinct()
+                )
+                _all_tickers = [r[0] for r in _rs.all() if len(r[0]) <= 5]
+
+            pg_results = await compute_pcr_gamma(trade_date, symbols=_all_tickers)
             report.stage(
                 "compute_pcr_gamma",
                 symbols=len(pg_results),

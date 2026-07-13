@@ -258,6 +258,54 @@ async def _spot_by_symbol(
     return {s: float(c) for s, c in rs.all()}
 
 
+async def _read_pcr_history_for_symbol(
+    session: AsyncSession,
+    symbol: str,
+    trade_date: date,
+    *,
+    days: int = 14,
+) -> list[float]:
+    """V1.7.4: 读指定 symbol 过去 N 日每日 PCR 计算值,作为 PCR Z-Score 推导 history。
+
+    调用 options_chain 按 day 聚合 volume,SUM(put_vol) / SUM(call_vol)。通过率
+    年交易日 ≤ 16 个交易日, 14 日一般能拉到 10+ 个 trade_date,足以产生有效 z-score。
+    若 history 不足 3 个交易日返 []。
+    """
+    from datetime import timedelta
+
+    table = Symbol.__table__.metadata.tables["options_chain"]
+    sql = (
+        select(
+            table.c.trade_date,
+            table.c.right,
+            table.c.volume,
+        )
+        .where(table.c.symbol == symbol)
+        .where(table.c.trade_date >= (trade_date - timedelta(days=int(days * 1.6))))
+        .where(table.c.trade_date < trade_date)
+    )
+    rs = await session.execute(sql)
+
+    # 按日聚合
+    pcr_by_day: dict[date, tuple[int, int]] = {}
+    for r in rs.all():
+        td, right, vol = r[0], r[1], int(r[2] or 0)
+        p, c = pcr_by_day.get(td, (0, 0))
+        if right == "P":
+            p += vol
+        else:
+            c += vol
+        pcr_by_day[td] = (p, c)
+
+    # 按交易日期顺序返回 PCR list
+    out: list[float] = []
+    for td in sorted(pcr_by_day.keys()):
+        p, c = pcr_by_day[td]
+        if c > 0:
+            out.append(p / c)
+    return out
+
+
 def _anomaly_payload(
     trade_date: date, hits: list[OptionCandidate], oi_5d: dict[str, list[float]]
 ) -> list[dict]:
@@ -440,10 +488,22 @@ async def compute_pcr_gamma(
     try:
         # 1) 取标的范围
         if symbols is None:
-            rs = await session.execute(
-                select(Symbol.ticker, Symbol.type).where(Symbol.is_universe.is_(True))
+            # V1.7.5.2: 默认拿所有有 options_chain contracts 的 tickers,不要只看 universe
+            from sqlalchemy import distinct as _distinct
+            from datetime import timedelta as _td
+            _options_table = Symbol.__table__.metadata.tables["options_chain"]
+            _rs = await session.execute(
+                select(_distinct(_options_table.c.symbol))
+                .where(_options_table.c.trade_date >= trade_date - _td(days=14))
             )
-            symbol_type_map: dict[str, str] = {t: ty for t, ty in rs.all()}
+            _distinct_syms = sorted(set(r[0] for r in _rs.all() if len(r[0]) <= 5))
+            symbol_type_map: dict[str, str] = {}
+            if _distinct_syms:
+                _type_rs = await session.execute(
+                    select(Symbol.ticker, Symbol.type).where(Symbol.ticker.in_(_distinct_syms))
+                )
+                for ticker, ty in _type_rs.all():
+                    symbol_type_map[ticker] = ty
         else:
             symbol_type_map = await _known_symbol_types(session, symbols)
 
@@ -483,7 +543,17 @@ async def compute_pcr_gamma(
             # PCR 计算
             put_vol = sum(int(r["volume"] or 0) for r in all_rows if r["right"] == "P")
             call_vol = sum(int(r["volume"] or 0) for r in all_rows if r["right"] == "C")
-            pcr_result = compute_pcr(put_vol, call_vol)
+
+            # V1.7.4: 拉过去 14 日 PCR 历史, 用于 pcr_z_score(V1.5.9 设计要求 cold-start 跳过此字段)
+            # options_chain 里可直接 SUM(volume) 按 day 聚合
+            pcr_history = await _read_pcr_history_for_symbol(
+                session, sym, trade_date, days=14
+            )
+            pcr_result = compute_pcr(
+                put_vol,
+                call_vol,
+                pcr_history=pcr_history if len(pcr_history) >= 3 else None,
+            )
 
             # 构建 candidates(用于 Gamma 和 OTM 刺客)
             candidates = []
@@ -509,13 +579,16 @@ async def compute_pcr_gamma(
                         )
                     )
 
-            # OTM 刺客(动态基准)
+            # OTM 刺客(动态基准, V1.7.4: vol_oi 从 3.0 调 1.5 降低刺客门椤, 使隐藏刺客可见)
             avg_30d = sum(c.volume for c in candidates) / max(len(candidates), 1)
             dyn_vol_min = compute_dynamic_vol_min(sym_type, avg_30d)
-            assassins = [c for c in candidates if is_otm_assassin(c, dyn_vol_min)]
+            assassins = [
+                c for c in candidates
+                if is_otm_assassin(c, dyn_vol_min, vol_oi_ratio_min=1.5)
+            ]
 
-            # Gamma 聚集
-            gamma = detect_gamma_cluster(candidates)
+            # Gamma 聚集(V1.7.4: dte_max 从 3 扩到 7, cluster_threshold 从 0.30 降到 0.20)
+            gamma = detect_gamma_cluster(candidates, dte_max=7, cluster_threshold=0.20)
             active_clusters = [gc for gc in gamma if gc.is_cluster]
 
             # signal_strength
@@ -544,14 +617,19 @@ async def compute_pcr_gamma(
                         }
                         for gc in active_clusters
                     ],
-                    signal_strength=signal.signal_strength.value,
+                    # V1.7.4: 历史不足返 INSUFFICIENT, 让前端明确展示“数据积累中”
+                    signal_strength=(
+                        "INSUFFICIENT"
+                        if (not pcr_history or len(pcr_history) < 3)
+                        else signal.signal_strength.value
+                    ),
                     signal_modules=signal.high_signal_modules,
                 )
             )
 
         await session.commit()
     except SQLAlchemyError as e:
-        log.error("compute_pcr_gamma.fail", error=str(e))
+        log.error("compute_pcr_gamma.fail error=%s", str(e))
     finally:
         if own_session:
             await session.close()

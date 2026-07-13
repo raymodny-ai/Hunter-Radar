@@ -67,7 +67,7 @@ def _build_payload(row: StatusRow) -> dict:
         "symbol": row.symbol,
         "data_source": row.data_source,
         "status": row.status,
-        "last_attempt_at": datetime.now(timezone.utc),
+        "last_attempt_at": datetime.now(),  # naive UTC(local here), table 是 TIMESTAMP WITHOUT TIME ZONE
         "detail": row.detail or {},
     }
 
