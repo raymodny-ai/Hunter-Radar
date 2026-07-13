@@ -96,38 +96,48 @@ def step1_truncate() -> None:
 
 
 def step2_flush_redis() -> None:
-    """用 python redis sync client 清 keys (无需 psql)。"""
-    log.info("STEP 2: flush redis opt:* / warmup:* keys")
+    """清 redis cache/opt/warmup keys。必须用 backend venv 的 python,系统 python 缺 async_timeout。"""
+    log.info("STEP 2: flush redis cache:* / opt:* / warmup:* keys")
     try:
-        import redis
-
-        # 改 path 用 backend 的 venv
-        sys.path.insert(
-            0, str(BACKEND / ".venv" / "lib" / "python3.12" / "site-packages")
+        venv_python = BACKEND / ".venv" / "bin" / "python"
+        helper = (
+            "import redis; "
+            "r = redis.Redis.from_url('redis://127.0.0.1:6379/0', decode_responses=True); "
+            "pats = ('cache:*', 'opt:*', 'warmup:*', 'warmup-state:*'); "
+            "n = sum(1 for pat in pats for _ in r.scan_iter(match=pat, count=200)); "
+            "[r.delete(k) for pat in pats for k in r.scan_iter(match=pat, count=200)]; "
+            "print(f'flushed {n} redis keys')"
         )
-        r = redis.Redis.from_url("redis://127.0.0.1:6379/0", decode_responses=True)
-        deleted = 0
-        for pattern in ("opt:*", "warmup:*", "warmup-state:*"):
-            for k in r.scan_iter(match=pattern, count=200):
-                r.delete(k)
-                deleted += 1
-        log.info("flushed %d redis keys", deleted)
+        res = subprocess.run(
+            [str(venv_python), "-c", helper],
+            capture_output=True, text=True, timeout=30,
+        )
+        if res.returncode == 0:
+            log.info(res.stdout.strip())
+        else:
+            log.warning("redis flush helper failed: %s", res.stderr.strip()[:300])
     except Exception as e:  # noqa: BLE001
         log.warning("redis flush failed: %s (continue)", e)
 
 
 def step3_trigger_rewarmup() -> None:
-    """通过 API POST /symbols 触发 22 个 ticker 重 warmup。"""
+    """通过 API POST /symbols 触发所有 ticker 重 warmup。"""
     log.info("STEP 3: trigger rewarmup via API for every symbol_master ticker")
 
     out = run_psql("SELECT ticker FROM symbol_master ORDER BY is_universe DESC, ticker")
-    tickers = [ln.strip() for ln in out.strip().splitlines() if ln.strip() and not ln.startswith("-") and not ln.startswith("ticker")]
-    # 去掉 header (第 1 行)
-    if tickers and "ticker" in tickers[0]:
-        tickers = tickers[1:]
+    raw_lines = [ln.strip() for ln in out.strip().splitlines() if ln.strip()]
+    # psql 输出形如: ticker / --- / TICKER1 / TICKER2 / ... / (N rows)
+    # 过滤: 去掉表头 + 分隔线 + (N rows) 统计行
+    tickers = [
+        ln for ln in raw_lines
+        if not ln.startswith("---")
+        and not ln.startswith("ticker")
+        and not (ln.startswith("(") and ln.endswith(")"))
+    ]
     log.info("got %d tickers", len(tickers))
 
-    ok = 0
+    scheduled = 0
+    already = 0
     fail = 0
     for t in tickers:
         url = "http://127.0.0.1:8000/api/v1/symbols"
@@ -141,15 +151,24 @@ def step3_trigger_rewarmup() -> None:
         try:
             with urllib.request.urlopen(req, timeout=10) as resp:  # noqa: S310
                 body = json.loads(resp.read())
-                ok += 1
+                # 真实 API 字段: created + warmup.{status,message}
+                # warmup.status: scheduled / running / already_running / completed / failed
+                warmup_obj = body.get("warmup") or {}
+                wstatus = warmup_obj.get("status", "?")
+                if wstatus in ("scheduled", "running"):
+                    scheduled += 1
+                elif wstatus == "already_running":
+                    already += 1
+                else:
+                    scheduled += 1  # completed/failed 也算已处理
                 log.info(
-                    "  %s → created=%s scheduled=%s",
-                    t, body.get("created"), body.get("warmup_scheduled"),
+                    "  %s → created=%s warmup=%s",
+                    t, body.get("created"), wstatus,
                 )
         except Exception as e:  # noqa: BLE001
             fail += 1
             log.warning("  %s → %s", t, e)
-    log.info("POST /symbols done: %d ok / %d fail", ok, fail)
+    log.info("POST /symbols done: %d scheduled / %d already_running / %d fail", scheduled, already, fail)
 
 
 def main() -> None:
@@ -160,7 +179,8 @@ def main() -> None:
     step2_flush_redis()
     step3_trigger_rewarmup()
     log.info("=" * 60)
-    log.info("V1.7.5 WIPE DONE — 后台 warmup 串行排队约 30-50 min")
+    log.info("V1.7.5 WIPE DONE — 后台 warmup 串行排队约 2-2.5 hr")
+    log.info("(32 ticker × 首次 FINRA 90 天拉数 ≈ 5 min/ticker)")
     log.info("Refresh 首页看实时进度")
     log.info("=" * 60)
 
