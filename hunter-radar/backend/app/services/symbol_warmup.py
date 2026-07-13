@@ -361,27 +361,33 @@ async def _warmup_one_symbol(ticker: str) -> WarmupResult:
         log.warning("warmup.options.fail", extra={"ticker": t, "error": str(e)})
 
     # ---- 4) 写 symbol_master.warmup metadata + 清缓存 ----
+    # V1.7.6: 原代码用 Symbol.__table__.select() (SA 1.x API),
+    # SA 2.0 async 已移除, 走 select(Symbol).where(...) 才正确
     try:
+        from sqlalchemy import select as _select, update as _update
         async with AsyncSessionLocal() as session:
             rs = await session.execute(
-                Symbol.__table__.select().where(Symbol.ticker == t)
+                _select(Symbol).where(Symbol.ticker == t)
             )
-            row = rs.first()
-            if row is not None:
-                meta = dict(row.metadata or {})
+            sym_obj = rs.scalar_one_or_none()
+            if sym_obj is not None:
+                meta = dict(sym_obj.metadata_json or {})
                 meta["warmup_attempts"] = meta.get("warmup_attempts", 0) + 1
                 meta["warmup_last_run"] = res.started_at
                 meta["warmup_last_status"] = "ok" if not res.errors else "partial"
                 meta["warmup_daily_bars"] = res.daily_bars
-                from sqlalchemy import update as _update
+                meta["warmup_short_rows"] = res.short_rows
+                meta["warmup_threat_rows"] = res.threat_rows
+                meta["warmup_errors"] = list(res.errors)[:10]
                 await session.execute(
                     _update(Symbol)
                     .where(Symbol.ticker == t)
-                    .values(metadata=meta)
+                    .values(metadata_json=meta)
                 )
                 await session.commit()
+                log.info("warmup.metadata.write.ok", extra={"ticker": t, "attempts": meta["warmup_attempts"]})
     except Exception as e:  # noqa: BLE001
-        log.warning("warmup.metadata.write.fail", extra={"ticker": t, "error": str(e)})
+        log.exception("warmup.metadata.write.fail ticker=%s err=%s", t, e)
 
     # ---- 5) 清缓存,下次 /threat 拉最新 ----
     try:

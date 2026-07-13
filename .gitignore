@@ -57,6 +57,12 @@ uv.lock
 vite.config.d.ts
 vite.config.js
 
+# Playwright 输出
+test-results/
+playwright-report/
+blob-report/
+.playwright/
+
 # 自动生成的静态路由表（项目有 routeTree.ts 作为源）
 routeTree.gen.ts
 
