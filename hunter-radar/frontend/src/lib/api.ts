@@ -29,6 +29,26 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 }
 
 export const api = {
+  // §0 标的 upsert + warmup 状态查询(V1.7.4)
+  /** 入库 + 触发后台 ETL 拉数。返 200 不等任务完成。 */
+  createSymbol: (ticker: string, name?: string, sym_type?: string) =>
+    request<{
+      ticker: string;
+      created: boolean;
+      warmup_scheduled: boolean;
+    }>("/symbols", {
+      method: "POST",
+      body: JSON.stringify({ ticker, name: name ?? ticker, type: sym_type ?? "stock" }),
+    }),
+  /** 读 symbol_master 静态字段(warmup_started_at / metadata_json)。 */
+  getWarmupState: (ticker: string) =>
+    request<{
+      ticker: string;
+      warmup_started_at: string | null;
+      is_universe: boolean;
+      metadata: Record<string, unknown>;
+    }>(`/symbols/${ticker}/warmup-state`),
+
   // §3.5 Threat Score
   getThreatScore: (ticker: string) =>
     request<{
@@ -50,7 +70,7 @@ export const api = {
     }>(`/symbols/${ticker}/threat`),
 
   getThreatHistory: (ticker: string, days = 90) =>
-    request<Array<{ date: string; total: number; total_raw: number }>>(
+    request<Array<{ date: string; total: number; total_raw: number; signal_lifecycle?: string }>>(
       `/symbols/${ticker}/threat-history?days=${days}`,
     ),
 
@@ -194,7 +214,7 @@ export const api = {
       pcr_extreme: boolean;
       otm_assassin_count: number;
       gamma_clusters: Array<{ strike: number; volume: number; ratio: number; is_cluster: boolean }>;
-      signal_strength: "HIGH" | "NORMAL" | "LOW";
+      signal_strength: "HIGH" | "NORMAL" | "LOW" | "INSUFFICIENT";
       signal_modules: string[];
       _cache: "hit" | "miss";
     }>(`/symbols/${ticker}/options-anomaly-v2`),
@@ -237,12 +257,22 @@ export const api = {
     request<{
       symbol: string;
       trade_date: string;
-      total: number;
-      contributions: Array<{
+      total_score: number;
+      total_raw: number;
+      primary_driver: string;
+      modules: Array<{
         module: string;
+        label: string;
         score: number;
         weight: number;
-        weighted_score: number;
+        contribution: number;
+      }>;
+      waterfall_data: Array<{
+        name: string;
+        module: string;
+        value: number;
+        cumulative: number;
+        is_primary: boolean;
       }>;
     }>(`/symbols/${ticker}/attribution`),
 

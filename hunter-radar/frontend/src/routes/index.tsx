@@ -1,7 +1,7 @@
 import { createRoute, useNavigate } from "@tanstack/react-router";
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useTranslation } from "react-i18next";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "@/lib/api";
 import { Route as RootRoute } from "./__root";
 
@@ -11,10 +11,44 @@ export const Route = createRoute({
   component: HomePage,
 });
 
+// ─── Local blacklist (per-browser, no backend) ───────────────────
+// "屏蔽" 的标的存 localStorage,刷新后仍生效
+const BLACKLIST_KEY = "hunter:home:top10:blacklist";
+
+function loadBlacklist(): Set<string> {
+  try {
+    const raw = localStorage.getItem(BLACKLIST_KEY);
+    return new Set(raw ? (JSON.parse(raw) as string[]) : []);
+  } catch {
+    return new Set();
+  }
+}
+
+function saveBlacklist(set: Set<string>) {
+  try {
+    localStorage.setItem(BLACKLIST_KEY, JSON.stringify([...set]));
+  } catch {
+    /* quota / private mode — ignore */
+  }
+}
+
 function HomePage() {
   const { t } = useTranslation();
   const [q, setQ] = useState("");
   const nav = useNavigate();
+  const qc = useQueryClient();
+
+  // Blacklist state — 触发重渲染 + 同步到 localStorage
+  const [blacklist, setBlacklist] = useState<Set<string>>(() => loadBlacklist());
+  useEffect(() => { saveBlacklist(blacklist); }, [blacklist]);
+
+  const removeFromBlacklist = (symbol: string) => {
+    setBlacklist((prev) => {
+      const next = new Set(prev);
+      next.delete(symbol);
+      return next;
+    });
+  };
 
   const screener = useQuery({
     queryKey: ["screener", "preview"],
@@ -31,6 +65,9 @@ function HomePage() {
       nav({ to: "/symbol/$ticker", params: { ticker: trimmed } });
     }
   };
+
+  // Filter out blacklisted symbols
+  const filteredRows = screener.data?.rows.filter((r) => !blacklist.has(r.symbol)) ?? [];
 
   return (
     <div className="space-y-8">
@@ -57,30 +94,74 @@ function HomePage() {
       </section>
 
       <section>
-        <h2 className="text-xl font-semibold mb-4">今日 Top 10 危险标的(预览)</h2>
+        <div className="flex items-center justify-between mb-4">
+          <h2 className="text-xl font-semibold">{t("home.top10Title")}</h2>
+          {blacklist.size > 0 && (
+            <span className="text-xs text-slate-500">
+              {t("home.blacklistCount", { count: blacklist.size })}
+            </span>
+          )}
+        </div>
         {screener.isError ? (
           <div className="text-slate-500 text-sm">
-            Screener 数据尚未就绪(预计 M2 末对接)。当前为占位卡片。
+            {t("home.screenerNotReady")}
           </div>
-        ) : screener.data && screener.data.rows.length > 0 ? (
+        ) : filteredRows.length > 0 ? (
           <ul className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
-            {screener.data.rows.map((r) => (
+            {filteredRows.map((r) => (
               <li
                 key={r.symbol}
-                className="bg-slate-900 border border-slate-800 rounded-md p-3 hover:border-slate-600 cursor-pointer"
-                onClick={() => nav({ to: "/symbol/$ticker", params: { ticker: r.symbol } })}
+                className="relative bg-slate-900 border border-slate-800 rounded-md p-3 hover:border-slate-600 cursor-pointer group"
               >
-                <div className="flex items-center justify-between">
-                  <span className="font-mono font-bold">{r.symbol}</span>
-                  <span className="text-2xl font-mono">{r.threat_score.toFixed(0)}</span>
+                {/* Remove button (always visible) */}
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    if (confirm(t("home.confirmBlacklist", { symbol: r.symbol }))) {
+                      setBlacklist((prev) => new Set(prev).add(r.symbol));
+                      // Trigger re-render of any consumer keyed on screener
+                      qc.invalidateQueries({ queryKey: ["screener", "preview"] });
+                    }
+                  }}
+                  className="absolute top-1.5 right-1.5 w-5 h-5 flex items-center justify-center rounded text-xs text-slate-500 hover:text-red-400 hover:bg-slate-800 transition-colors"
+                  aria-label={t("home.blacklistSymbol", { symbol: r.symbol })}
+                  title={t("home.blacklistSymbol", { symbol: r.symbol })}
+                >
+                  ×
+                </button>
+                <div onClick={() => nav({ to: "/symbol/$ticker", params: { ticker: r.symbol } })}>
+                  <div className="flex items-center justify-between pr-6">
+                    <span className="font-mono font-bold">{r.symbol}</span>
+                    <span className="text-2xl font-mono">{r.threat_score.toFixed(0)}</span>
+                  </div>
+                  <div className="text-xs text-slate-500 mt-1">{r.name}</div>
                 </div>
-                <div className="text-xs text-slate-500 mt-1">{r.name}</div>
               </li>
             ))}
           </ul>
+        ) : screener.data && screener.data.rows.length > 0 && blacklist.size > 0 ? (
+          // All rows blacklisted — show recover hint
+          <div className="text-slate-500 text-sm space-y-2">
+            <div>{t("home.allBlacklisted")}</div>
+            {blacklist.size > 0 && (
+              <div className="flex flex-wrap gap-1.5">
+                {[...blacklist].map((sym) => (
+                  <button
+                    key={sym}
+                    onClick={() => removeFromBlacklist(sym)}
+                    className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-slate-800 text-xs text-slate-300 hover:text-slate-100 hover:bg-slate-700"
+                    title={t("home.unblacklistSymbol")}
+                  >
+                    {sym}
+                    <span className="text-slate-500">↺</span>
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
         ) : (
           <div className="text-slate-500 text-sm">
-            Screener 尚未产出数据(预计 M2 末对接 BD-072)。当前为占位。
+            {t("home.screenerNoData")}
           </div>
         )}
       </section>

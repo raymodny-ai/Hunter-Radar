@@ -89,16 +89,16 @@ function ScreenerRowComponent({
       <div className="w-16 flex-shrink-0">
         <span
           className={`font-mono text-lg font-bold ${
-            r.threat_score >= 70
+            (r.threat_score ?? 0) >= 70
               ? "text-red-400"
-              : r.threat_score >= 50
+              : (r.threat_score ?? 0) >= 50
                 ? "text-amber-300"
-                : r.threat_score >= 30
+                : (r.threat_score ?? 0) >= 30
                   ? "text-slate-300"
                   : "text-emerald-400"
           }`}
         >
-          {r.threat_score.toFixed(0)}
+          {r.threat_score != null ? r.threat_score.toFixed(0) : "—"}
         </span>
       </div>
       <div className="w-16 flex-shrink-0">

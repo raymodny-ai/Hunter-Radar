@@ -28,6 +28,7 @@
     "noMembers": "还没有成员。输入 ticker 批量添加(逗号或空格分隔)。",
     "add": "添加",
     "removeMember": "移除",
+    "confirmRemoveMember": "确定从篮子中移除 {{ticker}}?",
     "alreadyExists": "这些代码已在篮子中,无需重复添加",
     "partialAdd": "已添加 {{inserted}} 个,{{skipped}} 个已在篮子中",
     "confirmDelete": "确定删除该篮子?",
@@ -347,5 +348,15 @@
   "a11y": {
     "skipToContent": "跳过导航",
     "chartDescription": "图表数据摘要"
+  },
+  "home": {
+    "top10Title": "今日 Top 10 危险标的(预览)",
+    "blacklistCount": "已屏蔽 {{count}} 个标的",
+    "confirmBlacklist": "确定屏蔽 {{symbol}}?该标的将不再出现在首页 Top 10。",
+    "blacklistSymbol": "屏蔽 {{symbol}}",
+    "unblacklistSymbol": "取消屏蔽",
+    "allBlacklisted": "今日 Top 10 中所有标的都已屏蔽。点击下方代码可恢复:",
+    "screenerNotReady": "Screener 数据尚未就绪(预计 M2 末对接)。当前为占位卡片。",
+    "screenerNoData": "Screener 尚未产出数据(预计 M2 末对接 BD-072)。当前为占位。"
   }
 }

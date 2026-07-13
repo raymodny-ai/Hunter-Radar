@@ -14,10 +14,10 @@ import { HUNTER_COLORS } from "@/lib/theme/hunter-dark";
 import { SkeletonChart } from "@/components/common/Skeleton";
 
 export interface SignalRadarProps {
-  moduleOptions: number | undefined;
-  moduleShort: number | undefined;
-  moduleDivergence: number | undefined;
-  moduleInsider: number | undefined;
+  moduleOptions: number | null | undefined;
+  moduleShort: number | null | undefined;
+  moduleDivergence: number | null | undefined;
+  moduleInsider: number | null | undefined;
   isLoading?: boolean;
   className?: string;
 }
@@ -34,10 +34,10 @@ export function SignalRadar({
 
   const option = useMemo<EChartsOptionLoose | null>(() => {
     if (
-      moduleOptions === undefined ||
-      moduleShort === undefined ||
-      moduleDivergence === undefined ||
-      moduleInsider === undefined
+      moduleOptions == null ||
+      moduleShort == null ||
+      moduleDivergence == null ||
+      moduleInsider == null
     )
       return null;
 

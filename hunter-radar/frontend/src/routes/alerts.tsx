@@ -291,7 +291,7 @@ function HistoryRow({ item }: { item: AlertHistoryItem }) {
       <div className="flex items-center gap-2">
         <span className="font-mono font-bold">{item.symbol}</span>
         <span className="text-xs text-slate-400">
-          {t("alerts.triggered")}: {item.value.toFixed(1)} ({t("alerts.threshold")}: {item.threshold})
+          {t("alerts.triggered")}: {item.value != null ? item.value.toFixed(1) : "—"} ({t("alerts.threshold")}: {item.threshold})
         </span>
       </div>
       <span className="text-xs text-slate-500">

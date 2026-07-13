@@ -8,6 +8,7 @@ import { Route as alertsRoute } from "./routes/alerts";
 import { Route as basketRoute } from "./routes/basket";
 import { Route as regimeRoute } from "./routes/regime";
 import { Route as adminRoute } from "./routes/admin";
+import { Route as logsRoute } from "./routes/logs";
 import { createRouter } from "@tanstack/react-router";
 
 // 构建路由树
@@ -19,6 +20,7 @@ const routeTree = rootRoute.addChildren([
   basketRoute,
   regimeRoute,
   adminRoute,
+  logsRoute,
 ]);
 
 export const router = createRouter({ routeTree });

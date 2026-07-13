@@ -143,16 +143,35 @@ function BasketListView({ onCreate, onDetail }: { onCreate: () => void; onDetail
         {baskets.map((b) => (
           <div
             key={b.id}
-            className="bg-slate-800/80 rounded-lg p-4 cursor-pointer hover:bg-slate-700/80 transition-colors border border-slate-700/50"
-            onClick={() => onDetail(b.id)}
+            className="relative bg-slate-800/80 rounded-lg p-4 pr-9 cursor-pointer hover:bg-slate-700/80 transition-colors border border-slate-700/50 group"
           >
-            <div className="font-semibold text-base">{b.name}</div>
-            {b.description && (
-              <div className="text-xs text-slate-400 mt-1 line-clamp-2">{b.description}</div>
-            )}
-            <div className="text-xs text-slate-500 mt-3">
-              {b.member_count} {t("basket.members")} · {t("basket.updated")} {b.updated_at}
+            <div onClick={() => onDetail(b.id)}>
+              <div className="font-semibold text-base">{b.name}</div>
+              {b.description && (
+                <div className="text-xs text-slate-400 mt-1 line-clamp-2">{b.description}</div>
+              )}
+              <div className="text-xs text-slate-500 mt-3">
+                {b.member_count} {t("basket.members")} · {t("basket.updated")} {b.updated_at}
+              </div>
             </div>
+            {/* Delete basket (always visible) */}
+            <button
+              onClick={async (e) => {
+                e.stopPropagation();
+                if (!confirm(t("basket.confirmDelete"))) return;
+                try {
+                  await api.deleteBasket(b.id);
+                  refresh();
+                } catch (err) {
+                  alert(t("common.error") + ': ' + (err instanceof ApiError ? `API ${err.status}` : String(err)));
+                }
+              }}
+              className="absolute top-1.5 right-1.5 w-6 h-6 flex items-center justify-center rounded text-sm text-slate-500 hover:text-red-400 hover:bg-slate-900/60 transition-colors"
+              aria-label={t("basket.deleteBasket")}
+              title={t("basket.deleteBasket")}
+            >
+              ×
+            </button>
           </div>
         ))}
       </div>
@@ -332,8 +351,8 @@ function BasketDetailView({
             <div className="text-sm text-slate-400 mt-1">{basket.description}</div>
           )}
         </div>
-        <button onClick={deleteBasket} className="px-2 py-1 text-xs rounded bg-slate-700 text-red-300 hover:bg-slate-600">
-          {t("basket.deleteBasket")}
+        <button onClick={deleteBasket} className="px-3 py-1.5 text-sm rounded bg-red-900/40 text-red-300 border border-red-800/50 hover:bg-red-900/60 hover:text-red-200 transition-colors">
+          🗑 {t("basket.deleteBasket")}
         </button>
       </div>
 
@@ -438,11 +457,15 @@ function MemberCard({
 
   return (
     <div className="bg-slate-800/80 rounded-lg p-3 border border-slate-700/50 flex flex-col gap-2 relative group hover:border-slate-600/80 transition-colors">
-      {/* Remove button */}
+      {/* Remove button (always visible) */}
       <button
-        onClick={onRemove}
-        className="absolute top-1.5 right-1.5 text-xs text-slate-600 hover:text-red-400 opacity-0 group-hover:opacity-100 transition-opacity"
+        onClick={(e) => {
+          e.stopPropagation();
+          if (confirm(t("basket.confirmRemoveMember", { ticker }))) onRemove();
+        }}
+        className="absolute top-1.5 right-1.5 w-5 h-5 flex items-center justify-center rounded text-xs text-slate-500 hover:text-red-400 hover:bg-slate-700/60 transition-colors"
         aria-label={t("basket.removeMember")}
+        title={t("basket.removeMember")}
       >
         ×
       </button>
@@ -468,7 +491,7 @@ function MemberCard({
           </div>
 
           {/* Threat Score */}
-          {score !== undefined ? (
+          {score !== undefined && score !== null ? (
             <div className="flex items-center gap-1.5 mt-0.5">
               <span className="font-mono text-lg font-bold" style={{
                 color: score >= 80 ? "#FF5252" : score >= 60 ? "#f59e0b" : score >= 40 ? "#fb923c" : "#10b981"

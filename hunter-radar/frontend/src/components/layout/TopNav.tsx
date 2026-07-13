@@ -43,6 +43,7 @@ export function TopNav() {
         <NavLink to="/screener" label={t("routes.screener")} />
         <NavLink to="/basket" label={t("routes.basket")} />
         <NavLink to="/alerts" label={t("routes.alerts")} />
+        <NavLink to="/logs" label="Logs" />
       </nav>
 
       {/* ── 搜索框 ──────────────────────────────────── */}
@@ -79,7 +80,7 @@ export function TopNav() {
           {rightSidebarOpen ? "✕" : "☰"}
         </button>
 
-        {/* 日志面板开关 */}
+        {/* 日志面板开关（仅触发右下角小弹窗，完整页面走顶部 NavLink /logs） */}
         <button
           onClick={() => setLogVisible((v) => !v)}
           className={[
@@ -88,9 +89,9 @@ export function TopNav() {
               ? "bg-sky-900/50 border-sky-700 text-sky-200"
               : "bg-slate-800/50 border-slate-700 text-slate-400 hover:text-slate-200",
           ].join(" ")}
-          title={logVisible ? "close logs" : "open logs"}
+          title={logVisible ? "关闭实时弹窗" : "打开实时弹窗(完整页面: /logs)"}
         >
-          Logs
+          ⚡
         </button>
       </div>
     </div>
