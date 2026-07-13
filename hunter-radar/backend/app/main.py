@@ -34,6 +34,7 @@ from app.api import (
     regime,
     screener,
     symbols,
+    symbol_admin,
     llm,
     log_stream,
 )
@@ -56,6 +57,70 @@ install_sse_logger()
 
 log = structlog.get_logger("hunter_radar")
 logging.basicConfig(level=settings.log_level)
+
+# ---- V1.7.0 stdlib ↔ structlog kwargs 兼容垫片 ----
+# 背景:etl/*.py 大量使用 structlog 风格 log.info("foo.bar", key=value, ...)。
+# stdlib logging.Logger._log() 不接受任意 kwargs,会抛 TypeError。
+# 这里打补丁:让 stdlib logger 的 info/warning/error/debug 接受 **kwargs,
+# 合并进 extra={}。这样 etl 现存代码无需修改也能跑。
+# 重要:适配层本身要抗型义——万一 fn() 内部再抛(例如 extra 含 Reserved Attr),Fallback 到 print
+import logging as _logging
+
+
+def _patch_logger_log() -> None:
+    _orig_info = _logging.Logger.info
+    _orig_warn = _logging.Logger.warning
+    _orig_error = _logging.Logger.error
+    _orig_debug = _logging.Logger.debug
+
+    def _adapt(name: str, fn):
+        def _wrapped(self, msg, *args, **kwargs):
+            # 提取非 stdlib 标准 kwargs → 拼到 msg 后面
+            stdlib_keys = {"exc_info", "stack_info", "stacklevel", "extra"}
+            extra_parts = {k: v for k, v in kwargs.items() if k not in stdlib_keys}
+            if extra_parts:
+                try:
+                    suffix = " " + " ".join(f"{k}={v!r}" for k, v in extra_parts.items())
+                except Exception:
+                    suffix = " <unrepr>"
+                msg = f"{msg}{suffix}"
+                # 把额外字段塞进 extra(便于 SSE/下游抓取)
+                extra = dict(kwargs.get("extra") or {})
+                # 避免 LogRecord reserved 字段名冲突(模块默认 LogRecord 字段是双下划线中间名字)
+                reserved = {
+                    "name", "msg", "args", "levelname", "levelno", "pathname",
+                    "filename", "module", "exc_info", "exc_text", "stack_info",
+                    "lineno", "funcName", "created", "msecs", "relativeCreated",
+                    "thread", "threadName", "processName", "process", "message",
+                    "asctime",
+                }
+                safe_extra = {k: v for k, v in extra_parts.items() if k not in reserved}
+                extra.update(safe_extra)
+                kwargs["extra"] = extra
+                # 剩下的合法 kwargs 走原 fn
+                for k in list(extra_parts.keys()):
+                    kwargs.pop(k, None)
+            try:
+                return fn(self, msg, *args, **kwargs)
+            except Exception as fallback_err:  # noqa: BLE001
+                # 极限 fallback: 调到原 _log 不带 extra
+                try:
+                    import sys
+                    sys.stderr.write(f"[log-fallback:{name}] {msg!r} ({fallback_err!s})\n")
+                    sys.stderr.flush()
+                except Exception:
+                    pass
+
+        _wrapped.__name__ = fn.__name__
+        return _wrapped
+
+    _logging.Logger.info = _adapt("info", _orig_info)
+    _logging.Logger.warning = _adapt("warning", _orig_warn)
+    _logging.Logger.error = _adapt("error", _orig_error)
+    _logging.Logger.debug = _adapt("debug", _orig_debug)
+
+
+_patch_logger_log()
 
 # ---- Sentry ----
 if settings.sentry_dsn:
@@ -89,6 +154,7 @@ app.add_middleware(GZipMiddleware, minimum_size=1024)
 # ---- 路由(M0 阶段先挂骨架,M1 后逐步替换为真实实现) ----
 app.include_router(health.router, tags=["health"])
 app.include_router(symbols.router, prefix="/api/v1", tags=["symbols"])
+app.include_router(symbol_admin.router, prefix="/api/v1", tags=["symbol-admin"])
 app.include_router(regime.router, prefix="/api/v1", tags=["regime"])
 app.include_router(screener.router, prefix="/api/v1", tags=["screener"])
 app.include_router(alerts.router, prefix="/api/v1", tags=["alerts"])

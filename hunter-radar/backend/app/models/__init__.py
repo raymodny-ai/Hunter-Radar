@@ -11,6 +11,7 @@ from sqlalchemy import (
     CHAR,
     CheckConstraint,
     Column,
+    Computed,
     Date,
     DateTime,
     ForeignKey,
@@ -58,6 +59,9 @@ class ShortVolume(Base):
     symbol: Mapped[str] = mapped_column(Text, ForeignKey("symbol_master.ticker"), nullable=False)
     short_volume: Mapped[int] = mapped_column(BigInteger, nullable=False)
     non_short_volume: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    total_volume: Mapped[int | None] = mapped_column(
+        BigInteger, Computed("short_volume + non_short_volume", persisted=True)
+    )
     venue: Mapped[str | None] = mapped_column(Text)
     source: Mapped[str] = mapped_column(Text, nullable=False, default="finra")
     fetched_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())

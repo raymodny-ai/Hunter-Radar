@@ -65,7 +65,10 @@ class Settings(BaseSettings):
     vapid_claims_email: str = "admin@hunter-radar.example"
 
     # ---- Data sources ----
-    finra_short_url: str = "https://www.finra.org/sites/default/files/2021-03/RegSHO-data.csv"
+    # FINRA Daily Short Sale Volume — Consolidated NMS 文件
+    # URL 模式:https://cdn.finra.org/equity/regsho/daily/CNMSshvol{YYYYMMDD}.txt
+    # 格式:Date|Symbol|ShortVolume|ShortExemptVolume|TotalVolume|Market (按 trade_date 一天一文件)
+    finra_short_url: str = "https://cdn.finra.org/equity/regsho/daily/CNMSshvol{trade_date}.txt"
     sec_edgar_base: str = "https://www.sec.gov"
     sec_user_agent: str = "HunterRadar/1.4 (ops@hunter-radar.example)"  # SEC 要求
     yfinance_rate_limit_per_sec: float = 1.0

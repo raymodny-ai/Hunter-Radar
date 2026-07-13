@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import logging
 from datetime import date, timedelta
 from typing import Literal
 
+import structlog
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
 from sqlalchemy import select
@@ -14,6 +16,10 @@ from app.core.config import settings
 from app.core.database import get_session
 from app.core.redis_client import cache_or_set_json
 from app.models import Symbol
+
+log = structlog.get_logger(__name__)
+
+log = logging.getLogger(__name__)
 
 router = APIRouter()
 
@@ -160,72 +166,85 @@ class UltimateAlertDTO(BaseModel):
 
 
 # ---- 端点 ----
-@router.get("/symbols/lookup", summary="搜索自动补全(BD-077)")
-async def lookup_symbols(q: str = Query(..., min_length=1, max_length=10)) -> list[dict]:
-    """输入「QQQ」返回 `{ticker, name, type, exchange}`。"""
-    # TODO(BD-077):对接 symbol_master 的 pg_trgm 索引
+@router.get("/symbols/lookup", summary="搜索自动补全(原 BD-077)")
+async def lookup_symbols(
+    q: str = Query(..., min_length=1, max_length=10),
+    session: AsyncSession = Depends(get_session),
+) -> list[dict]:
+    """输入「QQQ」返回 `{ticker, name, type, exchange}`。
+
+    实现:
+    - 优先从 symbol_master 查
+    - 查不到则用 yfinance 轻量查询(ticker.info)
+    - yfinance 也查询不到则当作一个未验证 ticker 返回, 后台 ETL 拉数时 upsert
+    """
+    t = q.upper().strip()
+
+    # 1) 本地 symbol_master
+    sym = (await session.execute(
+        select(Symbol).where(Symbol.ticker == t)
+    )).scalar_one_or_none()
+
+    if sym is not None:
+        return [
+            {
+                "ticker": sym.ticker,
+                "name": sym.name or sym.ticker,
+                "type": sym.type or "stock",
+                "exchange": sym.exchange or "",
+            }
+        ]
+
+    # 2) yfinance info 轻量补充
+    try:
+        import asyncio
+        from etl.market_data_provider import _yfinance_info  # type: ignore
+        info = await asyncio.to_thread(_yfinance_info, t)
+        if info and (info.get("longName") or info.get("shortName") or info.get("symbol")):
+            return [
+                {
+                    "ticker": t,
+                    "name": info.get("longName") or info.get("shortName") or t,
+                    "type": "etf" if info.get("quoteType") == "ETF" else "stock",
+                    "exchange": info.get("exchange", ""),
+                }
+            ]
+    except Exception as _yf_err:  # noqa: BLE001
+        log.warning("lookup.yfinance.fail", ticker=t, error=str(_yf_err)[:200])
+
+    # 3) 返个 unverified stub, 让前端允许输入, 后台 ETL 拉数时 upsert 到 symbol_master
     return [
-        {"ticker": q.upper(), "name": "(待 BD-077 实现)", "type": "stock", "exchange": "NASDAQ"}
+        {
+            "ticker": t,
+            "name": f"{t} (unverified, 等待 ETL 拉数)",
+            "type": "stock",
+            "exchange": "",
+        }
     ]
 
 
-# ---- 按需初始化: 查不到数据时自动拉取 yfinance 生成 ----
+# ---- 按需初始化: 查不到数据时自动触发后台 ETL ----
 async def _seed_ticker(sym: str, session) -> None:
-    from sqlalchemy import text as _t
-    import random
+    """V1.7.0 替换: 标的入库 + 后台 ETL 触发。
+
+    不再塞随机假数据(原行为是占位 stub);改走 etl.symbol_seed.upsert_symbol +
+    app.services.symbol_warmup.schedule_warmup。HTTP 响应立即返回,前端可轮询
+    /symbols/{t}/warmup 看进度。
+    """
+    from etl.symbol_seed import upsert_symbol
+    from app.services.symbol_warmup import schedule_warmup
 
     try:
-        from etl.yfinance_pull import fetch_daily_bars
-        bars = await fetch_daily_bars(sym, date.today() - timedelta(days=40), date.today())
-    except Exception:
-        return
-    if not bars:
-        return
-
-    # 必须先确保 symbol_master 存在,否则 daily_price 的外键约束会失败
-    await session.execute(_t(
-        "INSERT INTO symbol_master (ticker,name,type,is_active,is_universe,metadata) VALUES (:t,:n,'stock',true,false,'{}') ON CONFLICT (ticker) DO UPDATE SET name=:n"),
-        {'t':sym,'n':sym})
-    # 用 begin_nested 包裹后续插入,单条失败不阻断后续
-    for bar in bars:
-        try:
-            await session.execute(_t(
-                """INSERT INTO daily_price (trade_date,symbol,open,high,low,close,adj_close,volume,source)
-                   VALUES (:d,:s,:o,:h,:l,:c,:ac,:v,'yfinance')
-                   ON CONFLICT (trade_date,symbol,source) DO NOTHING"""),
-                {'d':bar.trade_date,'s':bar.symbol,'o':bar.open,'h':bar.high,'l':bar.low,
-                 'c':bar.close,'ac':bar.adj_close,'v':bar.volume})
-        except Exception:
-            pass
-
-    base = random.uniform(20, 40)
-    for i, bar in enumerate(bars):
-        d = bar.trade_date
-        if i > 0:
-            base += random.gauss(0, 4)
-        base = max(5, min(95, base))
-        mo = round(base * random.uniform(0.7, 1.3), 2)
-        ms = round(base * random.uniform(0.7, 1.3), 2)
-        md = round(base * random.uniform(0.5, 1.2), 2)
-        mi = round(base * random.uniform(0.2, 0.8), 2)
-        tr = round(mo*0.30 + ms*0.35 + md*0.20 + mi*0.15, 2)
-        tot = round(tr * random.uniform(0.88, 1.0), 2)
-        lc = 'red' if tot >= 70 else 'yellow' if tot >= 50 else 'gray' if tot >= 30 else 'green'
-        w = '{"options":0.30,"short":0.35,"divergence":0.20,"insider":0.15}'
-        await session.execute(_t(
-            """INSERT INTO threat_score_daily
-               (trade_date,symbol,symbol_type,module_options,module_short,module_divergence,module_insider,weights,total,total_raw,ema_halflife,signal_lifecycle)
-               VALUES (:d,:s,'stock',:mo,:ms,:md,:mi,:w,:t,:tr,2,:lc)
-               ON CONFLICT DO NOTHING"""),
-            {'d':d,'s':sym,'mo':mo,'ms':ms,'md':md,'mi':mi,'w':w,'t':tot,'tr':tr,'lc':lc})
-        await session.execute(_t(
-            "INSERT INTO short_ratio_daily (trade_date,symbol,short_ratio) VALUES (:d,:s,:sr) ON CONFLICT DO NOTHING"),
-            {'d':d,'s':sym,'sr':round(base*1.2+random.uniform(-5,5),2)})
-        await session.execute(_t(
-            "INSERT INTO divergence_window (trade_date,symbol,p_price,p_short,divergence_state) VALUES (:d,:s,:pp,:ps,:st) ON CONFLICT DO NOTHING"),
-            {'d':d,'s':sym,'pp':round(float(bar.close),2),'ps':round(45+base*0.3,0),
-             'st':random.choice(['none','rising','confirmed'])})
-    await session.commit()
+        sym_obj, _created = await upsert_symbol(
+            sym,
+            name=sym,
+            sym_type="stock",
+            start_warmup=True,
+            session=session,
+        )
+        await schedule_warmup(sym_obj.ticker)
+    except Exception as e:  # noqa: BLE001
+        log.warning("symbols._seed_ticker.fail", ticker=sym, error=str(e))
 
 
 async def _compute_threat_score(ticker: str, session: AsyncSession) -> ThreatScoreDTO:
