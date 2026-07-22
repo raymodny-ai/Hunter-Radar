@@ -34,8 +34,13 @@ export const api = {
   createSymbol: (ticker: string, name?: string, sym_type?: string) =>
     request<{
       ticker: string;
+      name: string;
+      type: string;
+      exchange: string | null;
+      is_universe: boolean;
+      warmup_started_at: string | null;
       created: boolean;
-      warmup_scheduled: boolean;
+      warmup: Record<string, unknown>;
     }>("/symbols", {
       method: "POST",
       body: JSON.stringify({ ticker, name: name ?? ticker, type: sym_type ?? "stock" }),
@@ -207,9 +212,7 @@ export const api = {
     request<{
       symbol: string;
       trade_date: string;
-      pcr: number;
-      pcr_total_put: number;
-      pcr_total_call: number;
+      pcr: number | null;
       pcr_z_score: number | null;
       pcr_extreme: boolean;
       otm_assassin_count: number;
@@ -256,10 +259,12 @@ export const api = {
   getAttribution: (ticker: string) =>
     request<{
       symbol: string;
+      symbol_type: string;
       trade_date: string;
       total_score: number;
       total_raw: number;
       primary_driver: string;
+      primary_driver_label: string;
       modules: Array<{
         module: string;
         label: string;
@@ -277,37 +282,54 @@ export const api = {
     }>(`/symbols/${ticker}/attribution`),
 
   // §3.3 市场体制时间轴(Regime Timeline)
+  // 注意: 后端路径是 /regime/timeline(非 /regime-timeline)
+  // 响应是 {days, points, transitions, current_regime} 包装结构
   getRegimeTimeline: (days = 90) =>
-    request<
-      Array<{
+    request<{
+      days: number;
+      points: Array<{
         trade_date: string;
         regime: "normal" | "panic";
         vix: number | null;
         spx_close: number | null;
-      }>
-    >(`/regime-timeline?days=${days}`),
+        spx_ma20: number | null;
+        is_transition: boolean;
+      }>;
+      transitions: number;
+      current_regime: string;
+    }>(`/regime/timeline?days=${days}`),
 
   // §3.5 预警规则 CRUD
+  // 注意: 后端主路径是 /alert-rules(非 /alerts),走 DSL 模型
   listAlerts: () =>
     request<
       Array<{
         id: number;
-        symbol: string;
-        rule_type: string;
-        threshold: number;
-        operator: string;
-        enabled: boolean;
+        user_id: string;
+        name: string;
+        dsl: { when: Array<{ metric: string; op: string; value: unknown }>; then: string };
+        channels: string[];
+        is_active: boolean;
         created_at: string;
+        updated_at: string;
       }>
-    >(`/alerts`),
+    >(`/alert-rules`),
 
   createAlert: (body: {
-    symbol: string;
-    rule_type: string;
-    threshold: number;
-    operator: string;
+    name: string;
+    dsl: { when: Array<{ metric: string; op: string; value: unknown }>; then?: string };
+    channels?: string[];
   }) =>
-    request<{ id: number }>(`/alerts`, {
+    request<{
+      id: number;
+      user_id: string;
+      name: string;
+      dsl: { when: Array<{ metric: string; op: string; value: unknown }>; then: string };
+      channels: string[];
+      is_active: boolean;
+      created_at: string;
+      updated_at: string;
+    }>(`/alert-rules`, {
       method: "POST",
       body: JSON.stringify(body),
     }),
@@ -315,40 +337,67 @@ export const api = {
   getAlert: (id: number) =>
     request<{
       id: number;
-      symbol: string;
-      rule_type: string;
-      threshold: number;
-      operator: string;
-      enabled: boolean;
-    }>(`/alerts/${id}`),
+      user_id: string;
+      name: string;
+      dsl: { when: Array<{ metric: string; op: string; value: unknown }>; then: string };
+      channels: string[];
+      is_active: boolean;
+      created_at: string;
+      updated_at: string;
+    }>(`/alert-rules/${id}`),
 
   updateAlert: (id: number, body: Partial<{
-    rule_type: string;
-    threshold: number;
-    operator: string;
-    enabled: boolean;
+    name: string;
+    dsl: { when: Array<{ metric: string; op: string; value: unknown }>; then?: string };
+    channels: string[];
+    is_active: boolean;
   }>) =>
-    request<void>(`/alerts/${id}`, {
+    request<{
+      id: number;
+      user_id: string;
+      name: string;
+      dsl: { when: Array<{ metric: string; op: string; value: unknown }>; then: string };
+      channels: string[];
+      is_active: boolean;
+      created_at: string;
+      updated_at: string;
+    }>(`/alert-rules/${id}`, {
       method: "PUT",
       body: JSON.stringify(body),
     }),
 
   deleteAlert: (id: number) =>
-    request<void>(`/alerts/${id}`, { method: "DELETE" }),
+    request<void>(`/alert-rules/${id}`, { method: "DELETE" }),
 
-  // §6 预警历史流
-  listAlertHistory: (page = 1, pageSize = 20) =>
+  // §3.5.1 预警规则评估(后端有 eval 端点,无独立 history 端点)
+  evalAlertRule: (ruleId: number, body: {
+    tickers: string[];
+    as_of?: string;
+    persist?: boolean;
+  }) =>
     request<{
-      total: number;
-      items: Array<{
-        id: number;
-        alert_id: number;
-        symbol: string;
-        triggered_at: string;
-        value: number;
-        threshold: number;
+      rule_id: number;
+      as_of: string;
+      requested: number;
+      evaluated: number;
+      triggered: number;
+      no_data: number;
+      results: Array<{
+        ticker: string;
+        trade_date: string;
+        rule_id: number | null;
+        triggered: boolean;
+        ema_score: number | null;
+        raw_score: number | null;
+        lifecycle: string;
+        rationale: string;
+        event_id: number | null;
       }>;
-    }>(`/alerts/history?page=${page}&page_size=${pageSize}`),
+      warning: string | null;
+    }>(`/alert-rules/${ruleId}/eval`, {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
 
   // §6 Push 订阅
   getVapidPublicKey: () =>

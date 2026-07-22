@@ -24,22 +24,65 @@ export const Route = createRoute({
 
 type AlertRule = {
   id: number;
-  symbol: string;
-  rule_type: string;
-  threshold: number;
-  operator: string;
-  enabled: boolean;
+  user_id: string;
+  name: string;
+  dsl: { when: Array<{ metric: string; op: string; value: unknown }>; then: string };
+  channels: string[];
+  is_active: boolean;
   created_at: string;
+  updated_at: string;
 };
 
 type AlertHistoryItem = {
-  id: number;
-  alert_id: number;
-  symbol: string;
-  triggered_at: string;
-  value: number;
-  threshold: number;
+  ticker: string;
+  trade_date: string;
+  triggered: boolean;
+  ema_score: number | null;
+  raw_score: number | null;
+  lifecycle: string;
+  rationale: string;
 };
+
+// ── 翻译层: 前端简单模型 ↔ 后端 DSL 模型 ────────────────────
+const METRIC_TO_RULE_TYPE: Record<string, string> = {
+  "score.ema": "threat_score",
+  "score.raw": "threat_score",
+  "lifecycle": "threat_score",
+  "modules": "divergence",
+};
+
+function ruleToFormInit(rule: AlertRule): AlertRuleFormData | undefined {
+  // 从 DSL 提取第一条条件作为表单初始值
+  const first = rule.dsl.when[0];
+  if (!first) return undefined;
+  return {
+    symbol: rule.name,
+    rule_type: (METRIC_TO_RULE_TYPE[first.metric] ?? "threat_score") as AlertRuleFormData["rule_type"],
+    threshold: Number(first.value) || 70,
+    operator: first.op as AlertRuleFormData["operator"],
+  };
+}
+
+function formToCreatePayload(data: AlertRuleFormData) {
+  return {
+    name: data.symbol,
+    dsl: {
+      when: [{ metric: "score.ema", op: data.operator, value: data.threshold }],
+      then: "push" as const,
+    },
+    channels: ["email"],
+  };
+}
+
+function formToUpdatePayload(data: AlertRuleFormData) {
+  return {
+    name: data.symbol,
+    dsl: {
+      when: [{ metric: "score.ema", op: data.operator, value: data.threshold }],
+      then: "push" as const,
+    },
+  };
+}
 
 // ─── Main Page ───────────────────────────────────────────────────
 
@@ -71,23 +114,10 @@ function AlertsPage() {
     staleTime: 60_000,
   });
 
-  // Fetch history
-  const loadHistory = useCallback(async (page: number, append = false) => {
-    setLoadingMore(true);
-    try {
-      const data = await api.listAlertHistory(page, 20);
-      if (append) {
-        setHistoryItems((prev) => [...prev, ...data.items]);
-      } else {
-        setHistoryItems(data.items);
-      }
-      setHistoryTotal(data.total);
-      setHistoryPage(page);
-    } catch (e) {
-      setError(e instanceof ApiError ? `API ${e.status}` : String(e));
-    } finally {
-      setLoadingMore(false);
-    }
+  // Fetch history (通过 eval 端点模拟,无独立 history 端点)
+  const loadHistory = useCallback(async (_page: number, _append = false) => {
+    // 后端无独立 history 端点,暂不加载
+    setLoadingMore(false);
   }, []);
 
   useEffect(() => {
@@ -98,7 +128,7 @@ function AlertsPage() {
   const handleCreate = async (data: AlertRuleFormData) => {
     setError(null);
     try {
-      await api.createAlert(data);
+      await api.createAlert(formToCreatePayload(data));
       setShowForm(false);
       queryClient.invalidateQueries({ queryKey: ["alerts"] });
     } catch (e) {
@@ -111,11 +141,7 @@ function AlertsPage() {
     if (!editingRule) return;
     setError(null);
     try {
-      await api.updateAlert(editingRule.id, {
-        rule_type: data.rule_type,
-        threshold: data.threshold,
-        operator: data.operator,
-      });
+      await api.updateAlert(editingRule.id, formToUpdatePayload(data));
       setEditingRule(null);
       queryClient.invalidateQueries({ queryKey: ["alerts"] });
     } catch (e) {
@@ -136,7 +162,7 @@ function AlertsPage() {
   // Toggle enable/disable
   const handleToggle = async (rule: AlertRule) => {
     try {
-      await api.updateAlert(rule.id, { enabled: !rule.enabled });
+      await api.updateAlert(rule.id, { is_active: !rule.is_active });
       queryClient.invalidateQueries({ queryKey: ["alerts"] });
     } catch (e) {
       setError(e instanceof ApiError ? `API ${e.status}` : String(e));
@@ -167,12 +193,7 @@ function AlertsPage() {
       {/* Form overlay */}
       {(showForm || editingRule) && (
         <AlertRuleForm
-          initial={editingRule ? {
-            symbol: editingRule.symbol,
-            rule_type: editingRule.rule_type as AlertRuleFormData["rule_type"],
-            threshold: editingRule.threshold,
-            operator: editingRule.operator as AlertRuleFormData["operator"],
-          } : undefined}
+          initial={editingRule ? ruleToFormInit(editingRule) : undefined}
           onSubmit={editingRule ? handleUpdate : handleCreate}
           onCancel={() => { setShowForm(false); setEditingRule(null); }}
         />
@@ -210,7 +231,7 @@ function AlertsPage() {
         ) : (
           <div className="space-y-1">
             {historyItems.map((item) => (
-              <HistoryRow key={item.id} item={item} />
+              <HistoryRow key={`${item.ticker}-${item.trade_date}`} item={item} />
             ))}
             {hasMore && (
               <button
@@ -244,6 +265,12 @@ function RuleRow({
   onToggle: () => void;
 }) {
   const { t } = useTranslation();
+  // 从 DSL 提取显示信息
+  const firstCond = rule.dsl.when[0];
+  const metric = firstCond?.metric ?? "";
+  const op = firstCond?.op ?? "";
+  const value = firstCond?.value != null ? String(firstCond.value) : "—";
+  const ruleType = METRIC_TO_RULE_TYPE[metric] ?? metric;
   return (
     <div className="bg-slate-800/80 rounded-lg px-3 py-2 flex items-center justify-between border border-slate-700/50">
       <div className="flex items-center gap-3">
@@ -251,21 +278,21 @@ function RuleRow({
         <button
           onClick={onToggle}
           className={`w-8 h-4 rounded-full relative transition-colors ${
-            rule.enabled ? "bg-green-600" : "bg-slate-600"
+            rule.is_active ? "bg-green-600" : "bg-slate-600"
           }`}
-          aria-label={rule.enabled ? t("alerts.disable") : t("alerts.enable")}
+          aria-label={rule.is_active ? t("alerts.disable") : t("alerts.enable")}
         >
           <span
             className={`absolute top-0.5 w-3 h-3 rounded-full bg-white transition-transform ${
-              rule.enabled ? "left-4" : "left-0.5"
+              rule.is_active ? "left-4" : "left-0.5"
             }`}
           />
         </button>
 
         <div>
-          <span className="font-mono font-bold text-sm">{rule.symbol}</span>
+          <span className="font-mono font-bold text-sm">{rule.name}</span>
           <span className="text-xs text-slate-400 ml-2">
-            {t(`alerts.ruleTypes.${rule.rule_type}`)} {rule.operator} {rule.threshold}
+            {t(`alerts.ruleTypes.${ruleType}`, ruleType)} {op} {value}
           </span>
         </div>
       </div>
@@ -289,13 +316,14 @@ function HistoryRow({ item }: { item: AlertHistoryItem }) {
   return (
     <div className="bg-slate-800/50 rounded px-3 py-2 flex items-center justify-between text-sm border border-slate-700/30">
       <div className="flex items-center gap-2">
-        <span className="font-mono font-bold">{item.symbol}</span>
+        <span className="font-mono font-bold">{item.ticker}</span>
         <span className="text-xs text-slate-400">
-          {t("alerts.triggered")}: {item.value != null ? item.value.toFixed(1) : "—"} ({t("alerts.threshold")}: {item.threshold})
+          {item.triggered ? t("alerts.triggered") : "—"} | {item.lifecycle}
+          {item.ema_score != null ? ` (${item.ema_score.toFixed(1)})` : ""}
         </span>
       </div>
       <span className="text-xs text-slate-500">
-        {new Date(item.triggered_at).toLocaleString()}
+        {item.trade_date}
       </span>
     </div>
   );

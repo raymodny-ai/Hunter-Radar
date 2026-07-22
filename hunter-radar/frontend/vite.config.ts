@@ -111,7 +111,6 @@ export default defineConfig({
       output: {
         manualChunks: {
           echarts: ["echarts"],
-          charts: ["lightweight-charts"],
         },
       },
     },

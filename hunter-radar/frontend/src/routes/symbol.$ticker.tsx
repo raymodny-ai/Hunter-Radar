@@ -314,7 +314,7 @@ function SymbolPage() {
               <div>
                 <div className="text-slate-500 mb-0.5">{t("symbol.putCallVolume")}</div>
                 <div className="font-mono text-slate-300">
-                  {(optionsV2.data.pcr_total_put ?? 0).toLocaleString()} / {(optionsV2.data.pcr_total_call ?? 0).toLocaleString()}
+                  {(optionsV2.data.pcr ?? 0).toFixed(3)}
                 </div>
               </div>
               <div>

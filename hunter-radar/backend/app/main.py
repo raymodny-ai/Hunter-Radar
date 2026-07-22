@@ -31,8 +31,6 @@ from app.api import (
     regime,
     regime_timeline,
     screener,
-    regime,
-    screener,
     symbols,
     symbol_admin,
     llm,

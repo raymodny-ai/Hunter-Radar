@@ -84,7 +84,7 @@ function RegimePage() {
         <h2 className="text-sm font-semibold text-slate-300 mb-3">
           {t("regime.timeline90d")}
         </h2>
-        <RegimeTimeline data={timeline.data} isLoading={timeline.isLoading} />
+        <RegimeTimeline data={timeline.data?.points} isLoading={timeline.isLoading} />
       </div>
     </div>
   );
@@ -202,7 +202,7 @@ function RegimeTimeline({
   data,
   isLoading,
 }: {
-  data: Array<{ trade_date: string; regime: "normal" | "panic"; vix: number | null; spx_close: number | null }> | undefined;
+  data: Array<{ trade_date: string; regime: "normal" | "panic"; vix: number | null; spx_close: number | null; spx_ma20?: number | null; is_transition?: boolean }> | undefined;
   isLoading: boolean;
 }) {
   const { t } = useTranslation();
