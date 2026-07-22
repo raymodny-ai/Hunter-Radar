@@ -31,6 +31,22 @@ from etl.load_short_volume import LoadResult
 
 log = logging.getLogger(__name__)
 
+# ---- ATS 暗池占比分层代理值(BD-031, V1.7.6+) ----
+# 按市值(日均做空量代理)分层,比单值 0.45 更接近现实
+# large_cap: 大盘股(日均量 > 10M) → 暗池占比更高
+# mid_cap:   中盘股(1M ~ 10M)
+# small_cap: 小盘股(< 1M) → 暗池参与度低
+_ATS_PROXY_BY_TIER: dict[str, float] = {
+    "large_cap": 0.48,
+    "mid_cap": 0.42,
+    "small_cap": 0.35,
+}
+_VOL_THRESHOLDS: list[tuple[str, float]] = [
+    ("large_cap", 10_000_000),
+    ("mid_cap", 1_000_000),
+    # 其余归 small_cap
+]
+
 
 @dataclass(slots=True)
 class ShortRatioResult(LoadResult):
@@ -114,18 +130,59 @@ async def _read_ats_pct_for_date(
     return out
 
 
+def _classify_cap_tier(avg_daily_volume: float) -> str:
+    """按日均量分市值层(large_cap / mid_cap / small_cap)。"""
+    for tier, threshold in _VOL_THRESHOLDS:
+        if avg_daily_volume >= threshold:
+            return tier
+    return "small_cap"
+
+
+async def _avg_daily_volume(
+    session: AsyncSession,
+    tickers: list[str],
+    trade_date: date,
+    *,
+    lookback_days: int = 20,
+) -> dict[str, float]:
+    """计算每 ticker 近 lookback_days 的日均做空量(用作市值分层代理)。"""
+    if not tickers:
+        return {}
+    sv = Symbol.__table__.metadata.tables["short_volume"]
+    sql = (
+        select(sv.c.symbol, sv.c.short_volume, sv.c.trade_date)
+        .where(sv.c.symbol.in_(set(tickers)))
+        .where(sv.c.trade_date >= trade_date - timedelta(days=lookback_days))
+        .where(sv.c.trade_date <= trade_date)
+    )
+    rs = await session.execute(sql)
+    vol_by_sym: dict[str, list[int]] = defaultdict(list)
+    for row in rs.all():
+        vol_by_sym[row.symbol].append(int(row.short_volume or 0))
+    return {
+        sym: sum(vols) / max(len(vols), 1)
+        for sym, vols in vol_by_sym.items()
+    }
+
+
 async def _read_ats_proxy_for_date(
     session: AsyncSession,
     tickers: list[str],
     trade_date: date,
-) -> dict[str, float]:
-    """暗池占比代理(BD-031, V1.7.3):当 ats_short 表空时,采用 SEC Rule 606 + TABB Group
-    2024 行业均值 0.45 作为 fallback。后续接入 FINRA OTC Transparency ATS_W_SMBL 后替换。
+) -> tuple[dict[str, float], set[str]]:
+    """暗池占比代理(BD-031, V1.7.6+):当 ats_short 表空时,按市值分层设定代理值。
 
-    Returns: {symbol: 0.45} dict for each ticker
+    分层策略:
+    - 用近 20 日日均做空量作为市值代理
+    - large_cap(>10M): 0.48  |  mid_cap(1M~10M): 0.42  |  small_cap(<1M): 0.35
+
+    Returns:
+        (proxy_map, proxy_symbols)
+        proxy_map: {symbol: proxy_value}
+        proxy_symbols: 使用了代理值的 symbol 集合(用于标记 ats_data_quality="proxy")
     """
     if not tickers:
-        return {}
+        return {}, set()
     # 验证这些 ticker 在 short_volume 表里有当日数据
     sv = Symbol.__table__.metadata.tables["short_volume"]
     sv_sql = (
@@ -135,7 +192,21 @@ async def _read_ats_proxy_for_date(
     )
     rs = await session.execute(sv_sql)
     syms_with_data = {row[0] for row in rs.all()}
-    return {s: 0.45 for s in syms_with_data}
+    if not syms_with_data:
+        return {}, set()
+
+    # 按市值分层赋代理值
+    avg_vols = await _avg_daily_volume(session, list(syms_with_data), trade_date)
+    proxy_map: dict[str, float] = {}
+    for sym in syms_with_data:
+        tier = _classify_cap_tier(avg_vols.get(sym, 0.0))
+        proxy_map[sym] = _ATS_PROXY_BY_TIER[tier]
+    log.info(
+        "ats_proxy.tiered",
+        count=len(proxy_map),
+        tiers={t: sum(1 for s, v in proxy_map.items() if v == _ATS_PROXY_BY_TIER[t]) for t in _ATS_PROXY_BY_TIER},
+    )
+    return proxy_map, set(proxy_map.keys())
 
 
 def _zscore_payload(
@@ -144,8 +215,10 @@ def _zscore_payload(
     target: date,
     ats_pct_map: dict[str, float],
     lookback: int,
+    *,
+    proxy_symbols: set[str] | None = None,
 ) -> tuple[dict | None, int, int]:
-    """算单 ticker 在 target 日的 (short_ratio, z_score_60d, ats_short_pct)。"""
+    """算单 ticker 在 target 日的 (short_ratio, z_score_60d, ats_short_pct, ats_data_quality)。"""
     if not rows:
         return None, 0, 0
     # 取 (date, ratio) 中 date == target 的比率
@@ -167,6 +240,10 @@ def _zscore_payload(
             idx = i
             break
     z_today = z_series[idx] if idx >= 0 else None
+
+    # V1.7.6+: 标记 ats_data_quality — proxy 表示该值为分层代理值,非真实 ATS 数据
+    ats_quality = "proxy" if (proxy_symbols and ticker in proxy_symbols) else "real"
+
     if z_today is None:
         return (
             {
@@ -175,6 +252,7 @@ def _zscore_payload(
                 "short_ratio": round(target_ratio, 6),
                 "z_score_60d": None,
                 "ats_short_pct": ats_pct_map.get(ticker),
+                "ats_data_quality": ats_quality,
             },
             0,
             1,
@@ -186,6 +264,7 @@ def _zscore_payload(
             "short_ratio": round(target_ratio, 6),
             "z_score_60d": round(float(z_today), 4),
             "ats_short_pct": ats_pct_map.get(ticker),
+            "ats_data_quality": ats_quality,
         },
         1,
         0,
@@ -240,23 +319,28 @@ async def compute_short_ratio(
 
         # 3) 读 ats_short_pct(target 当日)
         ats_pct_map = await _read_ats_pct_for_date(session, target_tickers, trade_date)
-        # 3.1) V1.7.3: 暗池 proxy fallback — ats_short 表空时, 采用 SEC Rule 606 + TABB 行业均值 0.45
-        # 用于填充 front-end short-iceberg-v2 暗池占比层。后续接入 FINRA OTC Transparency 后替换
+        # 3.1) V1.7.6+: 暗池 proxy fallback — 按市值分层代理值
+        # large_cap: 0.48 | mid_cap: 0.42 | small_cap: 0.35
+        # 后续接入 FINRA OTC Transparency ATS_W_SMBL 后替换
+        proxy_symbols: set[str] = set()
         if ats_pct_map:
             missing = set(target_tickers) - set(ats_pct_map.keys())
         else:
             missing = set(target_tickers)
         if missing:
-            proxy_map = await _read_ats_proxy_for_date(session, list(missing), trade_date)
+            proxy_map, proxy_symbols = await _read_ats_proxy_for_date(session, list(missing), trade_date)
             ats_pct_map.update(proxy_map)
             if proxy_map:
-                log.info("compute_short_ratio.ats_proxy filled=%d source=SEC_Rule606_TABB_2024", len(proxy_map))
+                log.info("compute_short_ratio.ats_proxy filled=%d source=tiered_cap_proxy", len(proxy_map))
 
         # 4) 算每 ticker 的 (ratio, z, ats_pct) 落库 payload
         payload: list[dict] = []
         for sym in target_tickers:
             rows = history.get(sym, [])
-            p, n_z, n_warm = _zscore_payload(sym, rows, trade_date, ats_pct_map, lookback)
+            p, n_z, n_warm = _zscore_payload(
+                sym, rows, trade_date, ats_pct_map, lookback,
+                proxy_symbols=proxy_symbols,
+            )
             if p is None:
                 continue
             payload.append(p)
@@ -268,8 +352,13 @@ async def compute_short_ratio(
             return result
 
         # 5) 落库 ON CONFLICT DO UPDATE(可重跑覆盖,允许重新计算 Z-Score)
+        # V1.7.6+: ats_data_quality 不入库(表无此列), API 层动态计算
+        db_payload = [
+            {k: v for k, v in p.items() if k != "ats_data_quality"}
+            for p in payload
+        ]
         table = Symbol.__table__.metadata.tables["short_ratio_daily"]
-        stmt = pg_insert(table).values(payload)
+        stmt = pg_insert(table).values(db_payload)
         stmt = stmt.on_conflict_do_update(
             index_elements=["trade_date", "symbol"],
             set_={

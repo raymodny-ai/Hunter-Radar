@@ -37,8 +37,62 @@ from etl.load_options_chain import compute_option_anomaly, load_options_chain
 from etl.load_short_volume import load_short_volume
 from etl.refresh_data_status import mark_failed, mark_ready
 from etl.retry_policy import etl_retry_async, run_stage_with_retry
+from etl.validation import (
+    ValidationResult,
+    validate_options_chain,
+    validate_short_volume,
+)
 
 log = logging.getLogger(__name__)
+
+
+async def _compute_historical_short_p99(
+    trade_date: date,
+    *,
+    lookback_days: int = 120,
+) -> dict[str, float]:
+    """从 short_volume 表计算每 symbol 近 lookback_days 的做空量 P99。
+
+    供 validate_short_volume 的 historical_p99 参数使用,使统计离群检测生效。
+    出错时返回空 dict(不阻塞主流程)。
+    """
+    try:
+        from datetime import timedelta
+
+        from sqlalchemy import select, text
+
+        from app.core.database import AsyncSessionLocal
+        from app.models import Symbol
+
+        sv = Symbol.__table__.metadata.tables["short_volume"]
+        start = trade_date - timedelta(days=lookback_days)
+        sql = (
+            select(
+                sv.c.symbol,
+                sv.c.short_volume,
+            )
+            .where(sv.c.trade_date >= start)
+            .where(sv.c.trade_date <= trade_date)
+        )
+        async with AsyncSessionLocal() as session:
+            rs = await session.execute(sql)
+            vols_by_sym: dict[str, list[int]] = {}
+            for row in rs.all():
+                vols_by_sym.setdefault(row.symbol, []).append(int(row.short_volume or 0))
+        # 计算 P99(简单排序法)
+        import math
+
+        p99: dict[str, float] = {}
+        for sym, vols in vols_by_sym.items():
+            if len(vols) < 5:
+                continue
+            vols_sorted = sorted(vols)
+            idx = min(math.ceil(0.99 * len(vols_sorted)) - 1, len(vols_sorted) - 1)
+            p99[sym] = float(vols_sorted[idx])
+        return p99
+    except Exception as e:  # noqa: BLE001
+        log.warning("pipeline.compute_historical_p99.fail", error=str(e))
+        return {}
 
 
 @dataclass(slots=True)
@@ -154,16 +208,42 @@ async def run_daily_pipeline(
             report.add_error("load_daily_price", str(e))
             await mark_failed(trade_date, "yfinance_eod", error=str(e))
 
-    # ---- 2) FINRA 做空落库 ----
+    # ---- 2) FINRA 做空落库(V1.7.6+: 入库前强制 validate_short_volume) ----
     try:
         rows = await finra_run(trade_date)
-        res = await load_short_volume(rows)
-        await mark_ready(
-            trade_date,
-            "finra",
-            detail={"attempted": res.attempted, "inserted": res.inserted},
-        )
-        report.stage("load_short_volume", attempted=res.attempted, inserted=res.inserted, skipped=res.skipped, failures=res.failures)
+
+        # V1.7.6 数据质量门控: 入库前强制校验做空量
+        # 传入 historical_p99 使统计离群检测生效
+        historical_p99 = await _compute_historical_short_p99(trade_date)
+        vr_short = validate_short_volume(rows, historical_p99=historical_p99 or None)
+        if not vr_short.is_valid:
+            log.error(
+                "validation.short_volume.critical.skip_batch",
+                trade_date=str(trade_date),
+                checked=vr_short.checked_count,
+                outliers=vr_short.outlier_count,
+                summary=vr_short.summary(),
+            )
+            await mark_failed(
+                trade_date,
+                "finra",
+                error=f"validation critical: {vr_short.summary()}",
+            )
+            report.stage("load_short_volume", status="skipped_by_validation", summary=vr_short.summary())
+        else:
+            if vr_short.warnings:
+                log.warning(
+                    "validation.short_volume.warnings",
+                    trade_date=str(trade_date),
+                    outliers=vr_short.outlier_count,
+                )
+            res = await load_short_volume(rows)
+            await mark_ready(
+                trade_date,
+                "finra",
+                detail={"attempted": res.attempted, "inserted": res.inserted},
+            )
+            report.stage("load_short_volume", attempted=res.attempted, inserted=res.inserted, skipped=res.skipped, failures=res.failures)
     except Exception as e:  # noqa: BLE001
         report.add_error("load_short_volume", str(e))
         await mark_failed(trade_date, "finra", error=str(e))
@@ -197,13 +277,22 @@ async def run_daily_pipeline(
                 except Exception as e:  # noqa: BLE001
                     log.warning("provider.opt.fail", sym=seed["ticker"], error=str(e))
                     continue
-                # V1.6.0 数据校验
-                from etl.validation import validate_options_chain
-
+                # V1.6.0 数据校验 → V1.7.6 强制门控: critical 时跳过本批次入库
                 vr_opt = validate_options_chain(rows)
                 if not vr_opt.is_valid:
+                    log.error(
+                        "validation.options_chain.critical.skip_batch",
+                        sym=seed["ticker"],
+                        trade_date=str(trade_date),
+                        checked=vr_opt.checked_count,
+                        outliers=vr_opt.outlier_count,
+                        summary=vr_opt.summary(),
+                    )
+                    total["failures"] += vr_opt.checked_count
+                    continue
+                if vr_opt.warnings:
                     log.warning(
-                        "validation.options.critical",
+                        "validation.options_chain.warnings",
                         sym=seed["ticker"],
                         outliers=vr_opt.outlier_count,
                     )

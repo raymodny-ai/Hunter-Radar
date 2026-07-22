@@ -65,6 +65,8 @@ def parse_finra_short_csv(content: bytes) -> list[ShortVolumeRow]:
 
     ShortVolume / TotalVolume 是小数(可除尽)。ShortExemptVolume 是整数。
     返回标准 ShortVolumeRow(short_volume=ShortVolume, non_short_volume=TotalVolume-ShortVolume)。
+
+    V1.7.6+: 截断前检查精度损失,若 abs(float_val - int_val) > 0.5 则输出 warning。
     """
     text = content.decode("utf-8", errors="replace")
     reader = csv.DictReader(io.StringIO(text), delimiter="|")
@@ -73,8 +75,29 @@ def parse_finra_short_csv(content: bytes) -> list[ShortVolumeRow]:
         try:
             d = date.fromisoformat(row["Date"])
             sym = row["Symbol"].strip().upper()
-            sv = int(float(row["ShortVolume"]))  # 6.23e6
-            tv = int(float(row["TotalVolume"]))
+            # V1.7.6+: 截断前精度损失检查
+            sv_float = float(row["ShortVolume"])
+            sv_int = int(sv_float)
+            if abs(sv_float - sv_int) > 0.5:
+                log.warning(
+                    "finra.short.fractional_volume",
+                    sym=sym,
+                    date=str(d),
+                    raw_value=sv_float,
+                    truncated=sv_int,
+                )
+            tv_float = float(row["TotalVolume"])
+            tv_int = int(tv_float)
+            if abs(tv_float - tv_int) > 0.5:
+                log.warning(
+                    "finra.short.fractional_total_volume",
+                    sym=sym,
+                    date=str(d),
+                    raw_value=tv_float,
+                    truncated=tv_int,
+                )
+            sv = sv_int
+            tv = tv_int
             nsv = max(tv - sv, 0)
         except (KeyError, ValueError, TypeError):
             continue

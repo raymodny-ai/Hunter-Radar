@@ -105,6 +105,7 @@ export const api = {
       ats_short_pct: number | null;
       z_score_60d: number | null;
       data_warmup: boolean;
+      ats_data_quality: "real" | "proxy" | "none";
     }>>(`/symbols/${ticker}/short-iceberg?days=${days}`),
 
   // §3.3 量价背离
@@ -232,6 +233,7 @@ export const api = {
         ats_short_pct: number | null;
         z_score_60d: number | null;
         data_warmup: boolean;
+        ats_data_quality: "real" | "proxy" | "none";
       }>;
       ats_series: Array<{
         trade_date: string;

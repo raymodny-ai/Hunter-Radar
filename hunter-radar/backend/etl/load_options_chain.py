@@ -15,6 +15,7 @@
 from __future__ import annotations
 
 import logging
+from collections import defaultdict
 from dataclasses import dataclass
 from datetime import date
 from typing import Iterable
@@ -166,7 +167,11 @@ class AnomalyLoadResult:
 async def _read_today_puts(
     session: AsyncSession, trade_date: date, symbol: str
 ) -> list[dict]:
-    """读出指定交易日、symbol 的全部 Put 合约 + 前一日 OI(OI_prev)。"""
+    """读出指定交易日、symbol 的全部 Put 合约 + 前一日 OI(OI_prev)。
+
+    V1.7.6+: 增加 prev_oi_date 校验 — 若 prev OI 日期距 trade_date > 3 个自然日,
+    则将 open_interest_prev 置为 0,避免跨停盘日 OI 增幅被高估。
+    """
     table = Symbol.__table__.metadata.tables["options_chain"]
     sql = (
         select(
@@ -186,7 +191,7 @@ async def _read_today_puts(
     rs = await session.execute(sql)
     today_rows = [dict(row._mapping) for row in rs.all()]
 
-    # 前一日 OI(同 contract)
+    # 前一日 OI(同 contract) + 对应日期
     if not today_rows:
         return []
     contracts = [r["contract"] for r in today_rows]
@@ -198,23 +203,45 @@ async def _read_today_puts(
     )
     rs2 = await session.execute(prev_sql)
     prev_map: dict[str, int] = {}
+    prev_date_map: dict[str, date] = {}  # V1.7.6+: 记录每个 contract 的 prev OI 日期
     for row in rs2.all():
         if row.contract not in prev_map:
             prev_map[row.contract] = int(row.open_interest or 0)
+            prev_date_map[row.contract] = row.trade_date
 
     for r in today_rows:
-        r["open_interest_prev"] = prev_map.get(r["contract"], 0)
+        contract = r["contract"]
+        prev_oi_date = prev_date_map.get(contract)
+        # V1.7.6+: 跨停盘日保护 — prev OI 距今 > 3 自然日则视为不可用
+        if prev_oi_date is not None and abs((trade_date - prev_oi_date).days) > 3:
+            log.warning(
+                "options.oi_prev.stale",
+                symbol=symbol,
+                contract=contract,
+                prev_oi_date=str(prev_oi_date),
+                trade_date=str(trade_date),
+                gap_days=(trade_date - prev_oi_date).days,
+            )
+            r["open_interest_prev"] = 0
+        else:
+            r["open_interest_prev"] = prev_map.get(contract, 0)
     return today_rows
 
 
 def _to_candidates(
     rows: list[dict], symbol_type_map: dict[str, str], spot_by_symbol: dict[str, float]
 ) -> list[OptionCandidate]:
-    """dict 行 → OptionCandidate 列表,过滤 DTE≤3。"""
+    """dict 行 → OptionCandidate 列表,过滤 DTE≤3。
+
+    V1.7.6+: spot <= 0 时记录 warning 日志,记录被丢弃的 symbol 与合约数。
+    """
     out: list[OptionCandidate] = []
+    # V1.7.6+: 统计 spot<=0 被丢弃的 symbol 及合约数
+    _no_spot_symbols: dict[str, int] = defaultdict(int)
     for r in rows:
         spot = spot_by_symbol.get(r["symbol"], 0.0)
         if spot <= 0:
+            _no_spot_symbols[r["symbol"]] += 1
             continue
         # dte 优先取 compute_option_anomaly 调用方已注入的 r["dte"];
         # fallback:从 expiry - trade_date 推算(此时调用方未注入)
@@ -242,6 +269,15 @@ def _to_candidates(
                 open_interest_prev=int(r.get("open_interest_prev") or 0),
             )
         )
+    # V1.7.6+: 输出 spot 缺失的 warning 日志
+    if _no_spot_symbols:
+        for sym, cnt in _no_spot_symbols.items():
+            log.warning(
+                "options.candidate.skip_no_spot",
+                sym=sym,
+                trade_date=str(rows[0].get("trade_date", "?")) if rows else "?",
+                contracts_dropped=cnt,
+            )
     return out
 
 
@@ -393,6 +429,28 @@ async def compute_option_anomaly(
 
         # 2) 取 spot
         spot_map = await _spot_by_symbol(session, symbol_type_map.keys(), trade_date)
+
+        # V1.7.6+: spot 缺失的 symbol 写入 data_ingestion_status, 前端 DataStatus Banner 可展示数据不完整
+        no_spot_syms = set(symbol_type_map.keys()) - set(spot_map.keys())
+        if no_spot_syms:
+            try:
+                from etl.refresh_data_status import mark_skipped
+
+                for sym in no_spot_syms:
+                    await mark_skipped(
+                        trade_date,
+                        "yfinance_options",
+                        symbol=sym,
+                        reason="spot_price_missing",
+                    )
+                log.warning(
+                    "options.spot_missing",
+                    trade_date=str(trade_date),
+                    symbols=sorted(no_spot_syms),
+                    count=len(no_spot_syms),
+                )
+            except Exception:  # noqa: BLE001
+                pass  # 状态写入失败不阻塞主流程
 
         # 3) 对每个 symbol 读当日 Put 合约 + 前日 OI
         all_candidates: list[OptionCandidate] = []

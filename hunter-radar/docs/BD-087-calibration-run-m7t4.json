@@ -2,7 +2,7 @@
   "mode": "compare",
   "dataset_source": "data\\backtest_dataset_real.sandbox.jsonl",
   "sandbox": true,
-  "fetched_at": "2026-06-25T14:56:25.644318+00:00",
+  "fetched_at": "2026-07-22T01:35:20.680589+00:00",
   "weights_a": {
     "name": "v1.0",
     "values": {

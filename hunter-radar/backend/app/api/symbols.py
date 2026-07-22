@@ -63,6 +63,7 @@ class ShortIcebergDTO(BaseModel):
     ats_short_pct: float | None
     z_score_60d: float | None
     data_warmup: bool = False
+    ats_data_quality: Literal["real", "proxy", "none"] = "none"
 
 
 class DivergenceDTO(BaseModel):
@@ -414,7 +415,11 @@ async def get_short_iceberg(
     days: int = Query(default=20, ge=1, le=120),
     session: AsyncSession = Depends(get_session),
 ) -> list[ShortIcebergDTO]:
-    """读 short_ratio_daily(BD-030/031/032)。M1 末落库层未跑时,前端会拿到空数组。"""
+    """读 short_ratio_daily(BD-030/031/032)。M1 末落库层未跑时,前端会拿到空数组。
+
+    V1.7.6+: 动态计算 ats_data_quality — 检查 ats_short 表是否有真实数据。
+    """
+    t = ticker.upper()
     table = Symbol.__table__.metadata.tables["short_ratio_daily"]
     cutoff = date.today() - timedelta(days=int(days * 1.6) + 5)
     sql = (
@@ -424,22 +429,49 @@ async def get_short_iceberg(
             table.c.ats_short_pct,
             table.c.z_score_60d,
         )
-        .where(table.c.symbol == ticker.upper())
+        .where(table.c.symbol == t)
         .where(table.c.trade_date >= cutoff)
         .order_by(table.c.trade_date.asc())
     )
     rs = await session.execute(sql)
+    rows = rs.all()
+    if not rows:
+        return []
+
+    # V1.7.6+: 查 ats_short 表,判断哪些日期有真实 ATS 数据
+    ats_dates: set[date] = set()
+    try:
+        ats_tbl = Symbol.__table__.metadata.tables["ats_short"]
+        ats_sql = (
+            select(ats_tbl.c.trade_date)
+            .where(ats_tbl.c.symbol == t)
+            .where(ats_tbl.c.trade_date >= cutoff)
+            .distinct()
+        )
+        ats_rs = await session.execute(ats_sql)
+        ats_dates = {row.trade_date for row in ats_rs.all()}
+    except Exception:  # noqa: BLE001
+        pass  # ats_short 表不存在时全部视为 proxy
+
     out: list[ShortIcebergDTO] = []
-    for row in rs.all():
+    for row in rows:
         z = row.z_score_60d
+        # 动态判断 ats_data_quality
+        if row.ats_short_pct is None:
+            quality = "none"
+        elif row.trade_date in ats_dates:
+            quality = "real"
+        else:
+            quality = "proxy"
         out.append(
             ShortIcebergDTO(
                 trade_date=row.trade_date,
-                symbol=ticker.upper(),
+                symbol=t,
                 short_ratio=float(row.short_ratio or 0.0),
                 ats_short_pct=float(row.ats_short_pct) if row.ats_short_pct is not None else None,
                 z_score_60d=float(z) if z is not None else None,
                 data_warmup=z is None,
+                ats_data_quality=quality,
             )
         )
     return out
