@@ -448,12 +448,25 @@ async def _run_cli() -> None:
         print(res.summary)
     elif args.cmd == "compare":
         tickers = [t.strip().upper() for t in args.tickers.split(",") if t.strip()]
+        # V1.7.x 修正: 支持 custom: 前缀的 weights (与 run 一致)
+        def _parse_w(s: str) -> tuple[str, dict[str, float] | None]:
+            if s.startswith("custom:"):
+                custom = {}
+                for kv in s[len("custom:") :].split(","):
+                    k, v = kv.split(":")
+                    custom[k.strip()] = float(v)
+                return "custom", custom
+            return s, None
+
+        wname_a, custom_a = _parse_w(args.weights_a)
+        wname_b, custom_b = _parse_w(args.weights_b)
         out_a = await run_backtest(
             BacktestConfig(
                 tickers=tickers,
                 start_date=date.fromisoformat(args.start),
                 end_date=date.fromisoformat(args.end),
-                weights_name=args.weights_a,
+                weights_name=wname_a,
+                custom_weights=custom_a,
                 ema_halflife_days=args.halflife,
                 output_dir=args.output,
             )
@@ -463,7 +476,8 @@ async def _run_cli() -> None:
                 tickers=tickers,
                 start_date=date.fromisoformat(args.start),
                 end_date=date.fromisoformat(args.end),
-                weights_name=args.weights_b,
+                weights_name=wname_b,
+                custom_weights=custom_b,
                 ema_halflife_days=args.halflife,
                 output_dir=args.output,
             )
