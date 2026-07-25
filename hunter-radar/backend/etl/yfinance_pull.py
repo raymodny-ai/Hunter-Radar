@@ -106,7 +106,8 @@ async def fetch_options_chain(symbol: str) -> list[OptionContract]:
 
     await _limiter.acquire()
     ticker = yf.Ticker(symbol)
-    expirations: list[str] = await asyncio.to_thread(ticker.options)
+    # yfinance 1.x: Ticker.options 是 property(tuple), 不是 method
+    expirations: list[str] = list(await asyncio.to_thread(lambda: ticker.options))
     out: list[OptionContract] = []
     for exp in expirations:
         await _limiter.acquire()
@@ -123,8 +124,8 @@ async def fetch_options_chain(symbol: str) -> list[OptionContract]:
                         last_price=_safe_float(row.get("lastPrice")),
                         bid=_safe_float(row.get("bid")),
                         ask=_safe_float(row.get("ask")),
-                        volume=int(row.get("volume", 0) or 0),
-                        open_interest=int(row.get("openInterest", 0) or 0),
+                        volume=_safe_int(row.get("volume", 0)),
+                        open_interest=_safe_int(row.get("openInterest", 0)),
                         implied_vol=_safe_float(row.get("impliedVolatility")),
                         in_the_money=bool(row.get("inTheMoney", False)),
                     )
@@ -138,4 +139,15 @@ def _safe_float(v) -> float | None:
             return None
         return float(v)
     except (TypeError, ValueError):
+        return None
+
+
+def _safe_int(v) -> int:
+    """NaN-safe int cast (yfinance 1.x 常返 float NaN for volume/OI)."""
+    try:
+        if v is None or (isinstance(v, float) and v != v):
+            return 0
+        return int(float(v))
+    except (TypeError, ValueError):
+        return 0
         return None

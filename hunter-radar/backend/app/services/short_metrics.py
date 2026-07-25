@@ -56,8 +56,9 @@ def z_score_rolling(
     - 'vwma': 对 Z-Score 做成交量加权移动平均平滑
     """
     out: list[float | None] = [None] * len(history)
+    # lookback 必须 ≥ 2 才能计算 std (lookback - 1 做分母)
     if lookback < 2:
-        raise ValueError("lookback 必须 ≥ 2")
+        return out  # 冷启动: 全 None, 不算 Z-Score
     for i in range(lookback, len(history)):
         window = history[i - lookback : i]
         mean = sum(window) / lookback

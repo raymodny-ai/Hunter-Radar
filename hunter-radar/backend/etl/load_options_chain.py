@@ -18,7 +18,7 @@ import logging
 from collections import defaultdict
 from dataclasses import dataclass
 from datetime import date
-from typing import Iterable
+from typing import Any, Callable, Iterable
 
 from sqlalchemy import func, select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
@@ -56,6 +56,47 @@ async def _known_symbol_types(session: AsyncSession, tickers: Iterable[str]) -> 
     stmt = select(Symbol.ticker, Symbol.type).where(Symbol.ticker.in_(set(tickers)))
     rs = await session.execute(stmt)
     return {ticker: t for ticker, t in rs.all()}
+
+
+# PostgreSQL 单条语句参数上限 65535。options_chain / option_anomaly 单行 ~15 列,
+# 故单 symbol 一次性写入时 ~4000+ 行合约(SPY/QQQ 等大期权链)会越界。
+# 这里把 payload 切片,每片最多 chunk_rows 行,确保 params << 65535。
+_INSERT_CHUNK_ROWS_DEFAULT = 2000
+
+
+async def _chunked_pg_insert(
+    session,
+    table,
+    payload: list[dict],
+    *,
+    conflict_keys: list[str],
+    chunk_rows: int = _INSERT_CHUNK_ROWS_DEFAULT,
+    update_set_builder: Callable[[Any], dict] | None = None,
+) -> int:
+    """分块执行 pg_insert + ON CONFLICT,返回累计 affected 行数。
+
+    update_set_builder is None: ON CONFLICT DO NOTHING (返回 inserted 行数)
+    update_set_builder(callable): receives the pg_insert statement,
+                                  returns dict for ON CONFLICT DO UPDATE SET
+                                  (use stmt.excluded.<col> in the dict).
+                                  Returns affected rows including updates.
+    """
+    if not payload:
+        return 0
+    total_affected = 0
+    for start in range(0, len(payload), chunk_rows):
+        chunk = payload[start : start + chunk_rows]
+        stmt = pg_insert(table).values(chunk)
+        if update_set_builder is not None:
+            stmt = stmt.on_conflict_do_update(
+                index_elements=conflict_keys,
+                set_=update_set_builder(stmt),
+            )
+        else:
+            stmt = stmt.on_conflict_do_nothing(index_elements=conflict_keys)
+        rs = await session.execute(stmt)
+        total_affected += rs.rowcount or 0
+    return total_affected
 
 
 def _build_options_payload(
@@ -122,10 +163,17 @@ async def load_options_chain(
 
         if payload:
             table = Symbol.__table__.metadata.tables["options_chain"]
-            stmt = pg_insert(table).values(payload)
-            stmt = stmt.on_conflict_do_update(
-                index_elements=["trade_date", "contract", "source"],
-                set_={
+            # V1.6.1+V1.7.x merged: chunked pg_insert + ON CONFLICT DO UPDATE
+            # (保留 V1.7.x 的 2000 行分块以避免 long transaction;
+            #  采纳 V1.6.1 的 update 语义以便 last_price/bid/ask/volume/OI/IV/ITM
+            #  在重复采集时被刷新 — DO NOTHING 会让旧值过期)
+            inserted = await _chunked_pg_insert(
+                session,
+                table,
+                payload,
+                conflict_keys=["trade_date", "contract", "source"],
+                chunk_rows=2000,
+                update_set_builder=lambda stmt: {
                     "last_price": stmt.excluded.last_price,
                     "bid": stmt.excluded.bid,
                     "ask": stmt.excluded.ask,
@@ -136,8 +184,6 @@ async def load_options_chain(
                     "updated_at": func.now(),
                 },
             )
-            rs = await session.execute(stmt)
-            inserted = rs.rowcount or 0
             result.inserted = inserted
             result.skipped = len(payload) - inserted
         await session.commit()
@@ -491,10 +537,13 @@ async def compute_option_anomaly(
         # 7) 落库
         payload = _anomaly_payload(trade_date, hits, oi_5d)
         table = Symbol.__table__.metadata.tables["option_anomaly"]
-        stmt = pg_insert(table).values(payload)
-        stmt = stmt.on_conflict_do_nothing(index_elements=["trade_date", "contract"])
-        rs = await session.execute(stmt)
-        result.inserted = rs.rowcount or 0
+        result.inserted = await _chunked_pg_insert(
+            session,
+            table,
+            payload,
+            conflict_keys=["trade_date", "contract"],
+            chunk_rows=2000,
+        )
         result.skipped = len(payload) - result.inserted
         await session.commit()
     except SQLAlchemyError as e:

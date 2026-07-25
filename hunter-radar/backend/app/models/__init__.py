@@ -177,3 +177,35 @@ for _tname, _tcols in [
 ]:
     if _tname not in _SHARED_META.tables:
         Table(_tname, _SHARED_META, *_tcols, extend_existing=True)
+
+
+class BacktestDataset(Base):
+    """回测数据集 — payload JSON,实时由 etl.backtest_dataset 构建。"""
+
+    __tablename__ = "backtest_dataset"
+    __table_args__ = (
+        UniqueConstraint("ticker", "trade_date", name="backtest_dataset_ticker_trade_date_key"),
+    )
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    ticker: Mapped[str] = mapped_column(Text, ForeignKey("symbol_master.ticker"), nullable=False)
+    trade_date: Mapped[date] = mapped_column(Date, nullable=False)
+    payload: Mapped[dict] = mapped_column(JSONB, nullable=False)
+    checksum: Mapped[str] = mapped_column(Text, nullable=False)
+
+
+class BacktestEventGoldset(Base):
+    """金标准事件集 — 真实历史事件(SEC 8-K / 主流财经媒体)。"""
+
+    __tablename__ = "backtest_event_goldset"
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    ticker: Mapped[str] = mapped_column(Text, ForeignKey("symbol_master.ticker"), nullable=False)
+    event_type: Mapped[str] = mapped_column(Text, nullable=False)
+    severity: Mapped[str] = mapped_column(Text, nullable=False)
+    t_window_start: Mapped[date] = mapped_column(Date, nullable=False)
+    t_window_end: Mapped[date] = mapped_column(Date, nullable=False)
+    source_url: Mapped[str] = mapped_column(Text, nullable=False)
+    reviewer_signoff: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict)
+    notes: Mapped[str | None] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())

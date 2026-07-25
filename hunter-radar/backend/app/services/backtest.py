@@ -152,7 +152,19 @@ def _in_event_window(td: date, windows: list[tuple[date, date, str]]) -> bool:
 
 
 def _short_score_from_payload(history: list[dict], target_idx: int) -> float | None:
-    """从 backtest payload 算 short_ratio 历史 + Z-Score,返回当日 Z→ 0-100。"""
+    """从 backtest payload 算 short_ratio 历史 + Z-Score,返回当日 Z→ 0-100。
+
+    V1.7.x 改进: 如果 payload.short_ratio.short_ratio 有真值, 直接用 (无 Z-Score 冷启动)。
+    否则 fallback Z-Score on (short_volume / daily_price.volume)。
+    """
+    # 优先: payload.short_ratio.short_ratio (有 Z-Score 时更准)
+    for r in history[: target_idx + 1]:
+        sr = (r["payload"].get("short_ratio") or {})
+        if sr.get("short_ratio") is not None:
+            ratio = float(sr["short_ratio"])
+            # 直接 cap 0..1 → 0..100 (short_ratio 0.5 为 baseline)
+            return max(0.0, min(100.0, ratio * 100))
+    # Fallback: Z-Score on short_volume/daily_price.volume
     ratios: list[float] = []
     for r in history[: target_idx + 1]:
         sv = (r["payload"].get("short_volume") or {}).get("short_volume")
@@ -233,8 +245,19 @@ def _insider_score_from_payload(payload: dict, asof: date) -> float:
 
 
 def _options_score_from_payload(payload: dict) -> float:
-    """回测场景无 options_chain 真实数据,固定 30(中性偏低)。"""
-    return 30.0
+    """从 payload.options_summary 算 put/call 比率得 0..100。
+
+    V1.7.x 改进: 如果 options_summary.put_call_ratio 有真值, 用 PCR 推导分数。
+    否则 fallback 到 30 (中性偏低)。
+    """
+    opts = payload.get("options_summary") or {}
+    pcr = opts.get("put_call_ratio")
+    if pcr is None:
+        return 30.0
+    # PCR > 1.0 = 看空 (高分), PCR < 0.5 = 看多 (低分)
+    # PCR 1.0 → 50, PCR 2.0 → 75, PCR 0.5 → 25
+    score = 50.0 + (pcr - 1.0) * 25
+    return max(0.0, min(100.0, score))
 
 
 # ---- 3) 跑回测 ----
