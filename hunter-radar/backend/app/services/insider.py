@@ -39,8 +39,10 @@ class BuybackEvent:
 
 
 def is_key_insider(role: str) -> bool:
-    """关键内部人判定(BD-050):CEO / CFO / Director / 10% Holder。"""
-    return role in {"CEO", "CFO", "Director", "10% Holder"}
+    """关键内部人判定(BD-050):CEO / CFO / Director / 10% Holder / Officer。
+    2026-07-29: 加入 Officer (涵盖 Principal Accounting Officer / General Counsel / VP 等官员)
+    """
+    return role in {"CEO", "CFO", "Director", "10% Holder", "Officer"}
 
 
 def classify_buy_window(event: Form4Event, lookback_days: int = 20) -> bool:

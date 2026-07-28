@@ -15,6 +15,14 @@ import os
 from typing import Any
 from uuid import UUID
 
+# 2026-07-29: 同 services/push.py, load_dotenv 以读取 .env 中的 VAPID_* env
+try:
+    from dotenv import load_dotenv
+    if os.path.exists(".env"):
+        load_dotenv(".env", override=False)
+except ImportError:
+    pass
+
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession

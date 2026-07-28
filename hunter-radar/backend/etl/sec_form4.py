@@ -63,8 +63,18 @@ _DIRECTION_MAP: dict[str, str] = {
 }
 
 
-def _normalize_role(officer_title: str | None, director: bool, is_ten_pct: bool) -> str:
-    """SEC officerTitle + director flag + 10% holder → 关键内部人枚举。"""
+def _normalize_role(
+    officer_title: str | None,
+    director: bool,
+    is_ten_pct: bool,
+    *,
+    is_officer: bool = False,
+) -> str:
+    """SEC officerTitle + director flag + 10% holder + officer 标记 → 关键内部人枚举。
+
+    2026-07-29 增强: 考虑到 is_officer 标志, 若 title 匹配 CEO/CFO 常见到,则返 CEO/CFO;
+    否则 是 Officer 但 title 不在 CEO/CFO 列表 → 返 "Officer" (services.is_key_insider 决定是否保留)
+    """
     if is_ten_pct:
         return "10% Holder"
     if director:
@@ -74,6 +84,11 @@ def _normalize_role(officer_title: str | None, director: bool, is_ten_pct: bool)
         return "CEO"
     if "CFO" in t or "CHIEF FINANCIAL" in t or "CHIEF FINANCE" in t:
         return "CFO"
+    if "PRESIDENT" in t or "COO" in t or "CHIEF OPERATING" in t:
+        return "Officer"
+    if is_officer:
+        # 其他 Officer title (Principal Accounting Officer, General Counsel, VP, etc.)
+        return "Officer"
     return "Other"  # 透传给 services.is_key_insider 判否
 
 
@@ -109,61 +124,236 @@ async def _sec_get_text(client: httpx.AsyncClient, url: str) -> str:
 
 
 def _parse_form4_html(html: str) -> dict:
-    """从 Form 4 HTML/XML 抽 3 个字段:reporting_person_name, role_summary, first_txn。
+    """从 Form 4 HTML 抽 reporting_person / role / first_txn 6 字段(2026-07-29 增强版)。
     
-    2026-07-28: 轻量级抽取(适应 SEC 各种 HTML 包装变体)。逐行 re。
-    返回 dict;解析失败字段返空。不用 BeautifulSoup(避免多 dep)。
+    核心策略:BeautifulSoup 结构化解析,正则 fallback。
+    - reporting_person_name: 第一个 <a href="cgi-bin/browse-edgar?action=getcompany&CIK=...">NAME</a>
+    - role checkboxes: Relationship table 解析 4 个 checkbox 行 (Director / Officer / 10% Owner / Other)
+    - officer_title: Officer 选中时同行的 title 文本
+    - first_txn: Table I 第一行 txn  — 跳过表头
+      - txn_code (S/P/A/F/J/etc), amount, A/D, price (含 $ + footnote 滑除)
     """
     out: dict = {
         "reporting_person_name": "",
         "officer_title": "",
         "is_director": False,
         "is_ten_pct": False,
+        "is_officer": False,
+        "is_other": False,
         "first_txn_qty": 0,
         "first_txn_price": None,
         "first_txn_code": "",
+        "first_txn_ad": "",  # A or D
     }
-    # 1) reporting person name — <a href="/cgi-bin/browse-edgar?action=getcompany&CIK=XXXXX">NAME</a>
-    #    在 Header 区段出现 1次(以下可能有 Issuer Name 别名但 action=getcompany 才是 reporting person)
-    m = re.search(
-        r'<a\s+href="/cgi-bin/browse-edgar\?action=getcompany&amp;CIK=\d+">([^<]+)</a>',
-        html,
-    )
-    if m:
-        out["reporting_person_name"] = m.group(1).strip()
-    # 2) role checkboxes — 'Director' 行 有 'FormData">X</span>' 表示选中
-    #    文本检测:简单正则
-    out["is_director"] = bool(re.search(r"Director[^<]*</td>\s*<td[^>]*>\s*<span class=\"FormData\">X</span>", html))
-    out["is_ten_pct"] = bool(re.search(r"10% Owner[^<]*</td>\s*<td[^>]*>\s*<span class=\"FormData\">X</span>", html))
-    # 3) officer title — 'Officer (give title below)' 后面 <td> 里的 <td style="color: blue">TITLE</td>
-    m = re.search(r"Officer\s*\(give title below\)</td>\s*<td[^>]*></td>\s*<td[^>]*></td>\s*<td[^>]*>([^<]+)</td>", html)
-    if m:
-        out["officer_title"] = m.group(1).strip()
-    # 4) first non-derivative transaction — Table I 第一个 <tbody><tr>
-    #    抽取 transaction code (S/P/A/F) + Amount + Price
-    m = re.search(
-        r"<tbody>\s*<tr>\s*<td[^>]*>[^<]*</td>\s*"  # Title of Security
-        r"<td[^>]*><span class=\"FormData\">([^<]+)</span></td>\s*"  # Txn Date
-        r"<td[^>]*></td>\s*"  # Deemed Execution
-        r"<td[^>]*><span class=\"(?:Small)?FormData\">([A-Z])</span>"  # Txn Code
-        r"(?:<span[^<]*<sup>\(\d+\)</sup></span>)?"
-        r"</td>\s*"
-        r"<td[^>]*></td>\s*"  # V
-        r"<td[^>]*><span class=\"FormData\">([0-9,\.]+)</span></td>\s*"  # Amount
-        r"<td[^>]*><span class=\"FormData\">([AD])</span></td>\s*"  # A or D
-        r"<td[^>]*>.*?<span class=\"FormData\">([0-9,\.]*)</span>",
-        html,
-        re.DOTALL,
-    )
-    if m:
-        try:
-            out["first_txn_code"] = m.group(2).strip()
-            out["first_txn_qty"] = int(m.group(3).replace(",", "").split(".")[0])
-            price_str = m.group(5).strip().replace(",", "")
-            if price_str:
-                out["first_txn_price"] = float(price_str)
-        except (ValueError, IndexError):
-            pass
+
+    # ---- 1) BeautifulSoup 解析 ----
+    try:
+        from bs4 import BeautifulSoup
+        soup = BeautifulSoup(html, "html.parser")
+    except Exception:
+        soup = None
+
+    if soup is not None:
+        # 1a) reporting person name — 第一个 getcompany anchor
+        anchors = soup.find_all(
+            "a", href=re.compile(r"browse-edgar.*action=getcompany", re.IGNORECASE)
+        )
+        if anchors:
+            out["reporting_person_name"] = anchors[0].get_text(strip=True)
+
+        # 1b) 找 Relationship / Director / Officer 表格
+        # Strategy: 找含 "5. Relationship of Reporting Person" 文本的 table
+        rel_table = None
+        for t in soup.find_all("table"):
+            txt = t.get_text(" ", strip=True)
+            if "Relationship of Reporting Person" in txt and "Director" in txt:
+                rel_table = t
+                break
+
+        if rel_table is not None:
+            # 仅扫 Row 0 (含 "Reporting Person" + "Relationship" + 4 个 label)
+            # 避免误扫到 “Form filed by ... Reporting Person” 部分
+            rows = rel_table.find_all("tr")
+            for row in rows:
+                txt = row.get_text(" ", strip=True)
+                if not ("Director" in txt and "Officer" in txt and "10% Owner" in txt):
+                    continue
+                # 拿到本行 cells
+                cells = row.find_all(["td", "th"])
+                # 定义 4 个 label 在 cells 中的位置
+                label_positions = {}
+                for j, c in enumerate(cells):
+                    ct = c.get_text(strip=True)
+                    if ct == "Director":
+                        label_positions["Director"] = j
+                    elif ct == "10% Owner":
+                        label_positions["10% Owner"] = j
+                    elif ct == "Officer (give title below)":
+                        label_positions["Officer"] = j
+                    elif ct == "Other (specify below)":
+                        label_positions["Other"] = j
+                # 扫 X: 看到 X 后, 推 label
+                # 规则: X 后面紧邻 label (X 在该 label 之前) 或 X 之前紧邻 label (X 是该 label 的 checkbox)
+                # 标准: [Label][X][Label][empty]... 一隔一
+                # 共享 X (SEC 8-K 样式): X 同时被 2 个 label 抱在中间 [Label][X][Label]
+                # 这里采用严格 X-后-紧邻-label 模式: 看到 X 后, 推 1 个 label
+                # 然后 额外启发: 如果该 label 后面 隔 1 个 cell 后接 另一 label (含 X 跨过的),
+                # 且后者 (Officer) 后面 跳过 1 个 cell 后有 title 文本, 推 Officer 也选中
+                for j, c in enumerate(cells):
+                    if c.get_text(strip=True) != "X":
+                        continue
+                    # 1. 检查左邻 label (X 是该 label 的 checkbox)
+                    if j - 1 >= 0:
+                        left_label = cells[j - 1].get_text(strip=True)
+                        if left_label == "Director":
+                            out["is_director"] = True
+                        elif left_label == "10% Owner":
+                            out["is_ten_pct"] = True
+                        elif left_label == "Officer (give title below)":
+                            out["is_officer"] = True
+                            # Officer X 在 j-1 cell, title 在 j+1 开始 (可能跨过 Other label)
+                            for k in range(j + 1, len(cells)):
+                                tval = cells[k].get_text(strip=True)
+                                if not tval:
+                                    continue
+                                if tval in ("X", "Director", "10% Owner", "Officer (give title below)", "Other (specify below)"):
+                                    continue
+                                if tval == "2a. Foreign Trading Symbol":
+                                    break
+                                out["officer_title"] = tval
+                                break
+                        elif left_label == "Other (specify below)":
+                            out["is_other"] = True
+                    # 2. 检查右邻 label (X 是上一个 label 的 checkbox, 但下一个 label 共享 X)
+                    # 共享 X 侍例: X 在 10% Owner 后 1 cell, Officer label 紧随其后
+                    #    含义: 10% Owner + Officer 都勾选 (10% Owner 控股人+Officer)
+                    # 识别: X 后 1 cell 是 label, 且 label 后面 跳过 1 cell 后有 title
+                    # 注意: title 可能跨过 Other (specify below) label, 出现在 cell 25
+                    # 也就是说 title cell 作 Officer label 后 1-2 个 cell + 跨过 Other label
+                    # 2026-07-29 add: X 也可能出现在 label 之前 (label 在 X 右侧)
+                    # 例: [X][Director]... 或 [X][10% Owner]...
+                    if j + 1 < len(cells):
+                        right_label = cells[j + 1].get_text(strip=True)
+                        if right_label == "Director":
+                            # X 在 Director 左侧 1 cell → Director 勾选
+                            out["is_director"] = True
+                        elif right_label == "Officer (give title below)":
+                            # Stevenson 形态: X 后 1 cell 紧接 Officer label → Officer 也勾选
+                            out["is_officer"] = True
+                            # title 在 Officer label 后 跳过 X/label/empty cells, 首个非空 cell
+                            for k in range(j + 2, len(cells)):
+                                tval = cells[k].get_text(strip=True)
+                                if not tval:
+                                    continue
+                                # 跳过 "Other (specify below)" label 和 X
+                                if tval in ("X", "Director", "10% Owner", "Officer (give title below)", "Other (specify below)"):
+                                    continue
+                                if tval == "2a. Foreign Trading Symbol":
+                                    break
+                                out["officer_title"] = tval
+                                break
+                        elif right_label == "10% Owner":
+                            # 形态 [10% Owner][X][Officer]: 推测 Officer 也勾选
+                            officer_label_j = j + 2
+                            if officer_label_j < len(cells):
+                                if (cells[officer_label_j].get_text(strip=True) == "Officer (give title below)"):
+                                    out["is_officer"] = True
+                                    for k in range(j + 3, len(cells)):
+                                        tval = cells[k].get_text(strip=True)
+                                        if not tval:
+                                            continue
+                                        if tval in ("X", "Director", "10% Owner", "Officer (give title below)", "Other (specify below)"):
+                                            continue
+                                        if tval == "2a. Foreign Trading Symbol":
+                                            break
+                                        out["officer_title"] = tval
+                                        break
+                break  # 只处理第一行有 4 label 的 row
+
+        # 1c) 找 Table I (Non-Derivative) — 第一个 txn
+        # 各家 Form 4 表格签名不统一,但 "Table I" 文本是通用键
+        txn_table = None
+        for t in soup.find_all("table"):
+            txt = t.get_text(" ", strip=True)
+            if "Table I" in txt and "Non-Derivative" in txt:
+                txn_table = t
+                break
+        if txn_table is not None:
+            rows = txn_table.find_all("tr")
+            # 跳过表头 2 row: '<thead>' Row 和题目 Row
+            # 2026-07-29 增强: 跳过 non-economic 转换 (J=礼物, F=代扣税, M=转换/行权)
+            #                      优先 S(卖) / P(买) / A(报赀) / C(转换) 等能体现为金额价值的
+            #                      如果一行没有价格(全 J/转换),保留作为 fallback
+            SKIP_CODES = {"J", "F", "M", "G"}  # 礼物/代扣/转换/礼物
+            best = None  # 候选,可能是 "无价" 转换
+            for r in rows:
+                cells = r.find_all(["td", "th"])
+                if len(cells) < 8:
+                    continue
+                vals = [c.get_text(strip=True) for c in cells]
+                # 跳过表头(常见前 2 行: "Table I..." + "1. Title..." + "Code V Amount...")
+                if any("Table I" in v for v in vals):
+                    continue
+                if any("Title of Security" in v for v in vals) or "Code" == vals[0]:
+                    continue
+                # 期望 11 cells: [Title, Date, Deemed, Code, V, Amount, AD, Price, After, DI, Indirect]
+                if len(vals) < 9:
+                    continue
+                # 抽 code (col 3, may have footnote)
+                code = re.sub(r"\([^)]*\)", "", vals[3]).strip()
+                if not code or not re.match(r"^[A-Z]$", code):
+                    continue
+                # 抽 qty (col 5)
+                qty_str = re.sub(r"[^0-9]", "", vals[5])
+                if not qty_str:
+                    continue
+                # 抽 price (col 7, 通常以 $ 开头)
+                price_str = vals[7].replace("$", "").strip()
+                price_str = re.sub(r"\([^)]*\)", "", price_str)
+                try:
+                    qty = int(qty_str)
+                except ValueError:
+                    continue
+                price = None
+                if price_str:
+                    try:
+                        price = float(price_str.replace(",", ""))
+                    except ValueError:
+                        pass
+                ad = vals[6].strip() if len(vals) > 6 else ""
+                # 选取:跳过 non-economic 转换,优先有价的 S/P/A
+                if code in SKIP_CODES:
+                    if best is None:
+                        best = (code, qty, price, ad)
+                    continue
+                # 命中“经济 txn”
+                out["first_txn_code"] = code
+                out["first_txn_qty"] = qty
+                out["first_txn_price"] = price
+                out["first_txn_ad"] = ad
+                break
+            # 退路:全是转换场景
+            if not out["first_txn_code"] and best is not None:
+                out["first_txn_code"], out["first_txn_qty"], out["first_txn_price"], out["first_txn_ad"] = best
+
+    # ---- 2) regex fallback (BeautifulSoup 完全失败时) ----
+    if not out["reporting_person_name"]:
+        m = re.search(
+            r'<a\s+href="/cgi-bin/browse-edgar\?action=getcompany&amp;CIK=\d+">([^<]+)</a>',
+            html,
+        )
+        if m:
+            out["reporting_person_name"] = m.group(1).strip()
+
+    if not out["is_director"]:
+        out["is_director"] = bool(
+            re.search(r"Director[^<]*</td>\s*<td[^>]*>\s*[Xx]\s*</td>", html, re.IGNORECASE)
+        )
+    if not out["is_ten_pct"]:
+        out["is_ten_pct"] = bool(
+            re.search(r"10% Owner[^<]*</td>\s*<td[^>]*>\s*[Xx]\s*</td>", html, re.IGNORECASE)
+        )
+
     return out
 
 
@@ -365,7 +555,10 @@ async def fetch_form4(symbol: str, since: date, *, enrich: bool = True) -> list[
                 r.insider_name = info["reporting_person_name"]
             # role: 用 _normalize_role 重新计
             r.insider_role = _normalize_role(
-                info["officer_title"], info["is_director"], info["is_ten_pct"]
+                info["officer_title"],
+                info["is_director"],
+                info["is_ten_pct"],
+                is_officer=info.get("is_officer", False),
             )
             if info["first_txn_qty"]:
                 r.qty = info["first_txn_qty"]

@@ -27,6 +27,15 @@ from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 from typing import Any
 
+# 2026-07-29: push.py 顶层 os.environ.get() 读不到 pydantic-settings 的 .env，
+# 手动 load_dotenv 应 Pydantic 之后, 使 VAPID_*, SMTP_* 等常量造表。
+try:
+    from dotenv import load_dotenv
+    if os.path.exists(".env"):
+        load_dotenv(".env", override=False)
+except ImportError:
+    pass
+
 log = logging.getLogger("hunter_radar.push")
 
 # ---- SMTP 配置(全部走 env;沙箱可全空) -------------------------------------
