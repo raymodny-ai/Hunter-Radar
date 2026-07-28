@@ -96,6 +96,77 @@ async def _sec_get(client: httpx.AsyncClient, url: str) -> dict:
     return r.json()
 
 
+@retry(
+    retry=retry_if_exception_type((httpx.HTTPError, httpx.TimeoutException)),
+    stop=stop_after_attempt(2),
+    wait=wait_exponential(multiplier=1, min=1, max=5),
+    reraise=True,
+)
+async def _sec_get_text(client: httpx.AsyncClient, url: str) -> str:
+    r = await client.get(url)
+    r.raise_for_status()
+    return r.text
+
+
+def _parse_form4_html(html: str) -> dict:
+    """从 Form 4 HTML/XML 抽 3 个字段:reporting_person_name, role_summary, first_txn。
+    
+    2026-07-28: 轻量级抽取(适应 SEC 各种 HTML 包装变体)。逐行 re。
+    返回 dict;解析失败字段返空。不用 BeautifulSoup(避免多 dep)。
+    """
+    out: dict = {
+        "reporting_person_name": "",
+        "officer_title": "",
+        "is_director": False,
+        "is_ten_pct": False,
+        "first_txn_qty": 0,
+        "first_txn_price": None,
+        "first_txn_code": "",
+    }
+    # 1) reporting person name — <a href="/cgi-bin/browse-edgar?action=getcompany&CIK=XXXXX">NAME</a>
+    #    在 Header 区段出现 1次(以下可能有 Issuer Name 别名但 action=getcompany 才是 reporting person)
+    m = re.search(
+        r'<a\s+href="/cgi-bin/browse-edgar\?action=getcompany&amp;CIK=\d+">([^<]+)</a>',
+        html,
+    )
+    if m:
+        out["reporting_person_name"] = m.group(1).strip()
+    # 2) role checkboxes — 'Director' 行 有 'FormData">X</span>' 表示选中
+    #    文本检测:简单正则
+    out["is_director"] = bool(re.search(r"Director[^<]*</td>\s*<td[^>]*>\s*<span class=\"FormData\">X</span>", html))
+    out["is_ten_pct"] = bool(re.search(r"10% Owner[^<]*</td>\s*<td[^>]*>\s*<span class=\"FormData\">X</span>", html))
+    # 3) officer title — 'Officer (give title below)' 后面 <td> 里的 <td style="color: blue">TITLE</td>
+    m = re.search(r"Officer\s*\(give title below\)</td>\s*<td[^>]*></td>\s*<td[^>]*></td>\s*<td[^>]*>([^<]+)</td>", html)
+    if m:
+        out["officer_title"] = m.group(1).strip()
+    # 4) first non-derivative transaction — Table I 第一个 <tbody><tr>
+    #    抽取 transaction code (S/P/A/F) + Amount + Price
+    m = re.search(
+        r"<tbody>\s*<tr>\s*<td[^>]*>[^<]*</td>\s*"  # Title of Security
+        r"<td[^>]*><span class=\"FormData\">([^<]+)</span></td>\s*"  # Txn Date
+        r"<td[^>]*></td>\s*"  # Deemed Execution
+        r"<td[^>]*><span class=\"(?:Small)?FormData\">([A-Z])</span>"  # Txn Code
+        r"(?:<span[^<]*<sup>\(\d+\)</sup></span>)?"
+        r"</td>\s*"
+        r"<td[^>]*></td>\s*"  # V
+        r"<td[^>]*><span class=\"FormData\">([0-9,\.]+)</span></td>\s*"  # Amount
+        r"<td[^>]*><span class=\"FormData\">([AD])</span></td>\s*"  # A or D
+        r"<td[^>]*>.*?<span class=\"FormData\">([0-9,\.]*)</span>",
+        html,
+        re.DOTALL,
+    )
+    if m:
+        try:
+            out["first_txn_code"] = m.group(2).strip()
+            out["first_txn_qty"] = int(m.group(3).replace(",", "").split(".")[0])
+            price_str = m.group(5).strip().replace(",", "")
+            if price_str:
+                out["first_txn_price"] = float(price_str)
+        except (ValueError, IndexError):
+            pass
+    return out
+
+
 # ---- 1) ticker → CIK 索引(可缓存到内存) ----
 
 
@@ -151,16 +222,23 @@ def _form4_index_url(cik10: str) -> str:
 
 
 def _parse_recent_form4(
-    symbol: str, recent: dict[str, Any], since: date
+    symbol: str, recent: dict[str, Any], since: date, *, cik10: str = ""
 ) -> list[Form4Row]:
     """从 submissions.recent 提取 Form 4 记录,过滤 txn_date >= since。
 
-    recent 含并行数组:form, transactionDate, transactionCode, rptOwnerName,
-    officerTitle, isDirector, isTenPercentOwner, transactionShares,
+    recent 含并行数组:form, transactionDate(=reportDate), transactionCode,
+    rptOwnerName, officerTitle, isDirector, isTenPercentOwner, transactionShares,
     transactionPrice, primaryDocument, filingDate
+
+    2026-07-28 fix: SEC submissions API 字段名为 reportDate 不是 transactionDate。
+    保留 transactionDate 优先 (兼容未来变化)。
     """
     form = recent.get("form", []) or []
-    txn_dates = recent.get("transactionDate", []) or []
+    txn_dates = (
+        recent.get("transactionDate")
+        or recent.get("reportDate")
+        or []
+    )
     txn_codes = recent.get("transactionCode", []) or []
     names = recent.get("rptOwnerName", []) or []
     titles = recent.get("officerTitle", []) or []
@@ -205,11 +283,10 @@ def _parse_recent_form4(
         accession = acc[i] if i < len(acc) else ""
         accession_compact = accession.replace("-", "") if accession else ""
         primary = prim_docs[i] if i < len(prim_docs) else ""
-        cik_match = re.search(r"CIK(\d+)", accession)
-        cik_part = cik_match.group(1) if cik_match else ""
+        cik_part = cik10 or ""  # 2026-07-28 fix: CIK 来自外面的索引,不是从 accession 拿
         if accession_compact and primary and cik_part:
             form_url = (
-                f"{settings.sec_edgar_base}/Archives/edgar/data/{cik_part}/"
+                f"https://www.sec.gov/Archives/edgar/data/{cik_part}/"
                 f"{accession_compact}/{primary}"
             )
         else:
@@ -236,12 +313,13 @@ def _parse_recent_form4(
 # ---- 3) 主入口 ----
 
 
-async def fetch_form4(symbol: str, since: date) -> list[Form4Row]:
+async def fetch_form4(symbol: str, since: date, *, enrich: bool = True) -> list[Form4Row]:
     """从 EDGAR submissions API 拉取指定 ticker 的 Form 4 列表。
 
     Args:
         symbol: 标的代码(大写)
         since: 起始日期(过滤 txn_date)
+        enrich: 是否拉取 primaryDocument HTML 抽取 reporting person / first txn(2026-07-28 新增)
 
     Returns:
         list[Form4Row](沙箱不可达 → 返回 [])
@@ -256,7 +334,7 @@ async def fetch_form4(symbol: str, since: date) -> list[Form4Row]:
     headers = {
         "User-Agent": settings.sec_user_agent,
         "Accept-Encoding": "gzip, deflate",
-        "Host": "www.sec.gov",
+        "Host": "data.sec.gov",  # 2026-07-28 fix: submissions API 在 data.sec.gov
     }
     try:
         async with httpx.AsyncClient(timeout=30.0, headers=headers) as client:
@@ -266,8 +344,40 @@ async def fetch_form4(symbol: str, since: date) -> list[Form4Row]:
         log.warning("sec.form4.fetch.fail", symbol=sym, error=str(e)[:200])
         return []
 
-    recent = data.get("recent", {}) or {}
-    return _parse_recent_form4(sym, recent, since)
+    # 2026-07-28 fix: SEC submissions JSON 结构是 data['filings']['recent'],不是 data['recent']
+    recent = (data.get("filings") or {}).get("recent") or data.get("recent") or {}
+    rows = _parse_recent_form4(sym, recent, since, cik10=cik10)
+    if not enrich or not rows:
+        return rows
+
+    # 2026-07-28 新增: enrichment — 拉每个 form_url HTML 抽 reporting person + first txn
+    enriched: list[Form4Row] = []
+    for r in rows:
+        if not r.form_url:
+            enriched.append(r)
+            continue
+        try:
+            async with httpx.AsyncClient(timeout=30.0, follow_redirects=True, headers={"User-Agent": settings.sec_user_agent, "Accept-Encoding": "gzip, deflate", "Host": "www.sec.gov"}) as client:
+                html = await _sec_get_text(client, r.form_url)
+                await asyncio.sleep(0.2)
+            info = _parse_form4_html(html)
+            if info["reporting_person_name"]:
+                r.insider_name = info["reporting_person_name"]
+            # role: 用 _normalize_role 重新计
+            r.insider_role = _normalize_role(
+                info["officer_title"], info["is_director"], info["is_ten_pct"]
+            )
+            if info["first_txn_qty"]:
+                r.qty = info["first_txn_qty"]
+            if info["first_txn_price"] is not None:
+                r.price = info["first_txn_price"]
+            # direction 优先用 form4 HTML 中的 code（submissions.recent 没这个字段）
+            if info["first_txn_code"]:
+                r.direction = _normalize_direction(info["first_txn_code"])
+        except Exception as e:  # noqa: BLE001
+            log.warning("sec.form4.enrich.fail", symbol=sym, url=r.form_url, error=str(e)[:120])
+        enriched.append(r)
+    return enriched
 
 
 async def run(symbol: str, since: date) -> list[Form4Row]:

@@ -175,7 +175,7 @@ async def main():
                 contracts = await fetch_options_chain(ticker)
                 if contracts:
                     async with AsyncSessionLocal() as session:
-                        await load_oc(contracts, symbol=ticker, trade_date=target, source="yfinance", session=session)
+                        await load_oc(contracts, trade_date=target, source="yfinance", session=session)
                         await session.commit()
                         oc_count += len(contracts)
                 else:
@@ -191,7 +191,7 @@ async def main():
                 ts_res = await compute_threat_scores(target, session=session)
                 log.info(f"  threat_score: {ts_res.attempted} attempted, {ts_res.inserted} inserted")
                 await session.commit()
-                await mark_ready(target, session=session)
+                await mark_ready(target, data_source="etl_year_2024")
         except Exception as e:
             log.warning(f"  threat_score fail: {e}")
 

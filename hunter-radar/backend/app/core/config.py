@@ -74,7 +74,7 @@ class Settings(BaseSettings):
     # URL 模式:https://cdn.finra.org/equity/regsho/daily/CNMSshvol{YYYYMMDD}.txt
     # 格式:Date|Symbol|ShortVolume|ShortExemptVolume|TotalVolume|Market (按 trade_date 一天一文件)
     finra_short_url: str = "https://cdn.finra.org/equity/regsho/daily/CNMSshvol{trade_date}.txt"
-    sec_edgar_base: str = "https://www.sec.gov"
+    sec_edgar_base: str = "https://data.sec.gov"  # 2026-07-28 fix: submissions API 在 data.sec.gov,不是 www.sec.gov
     sec_user_agent: str = "HunterRadar/1.4 (ops@hunter-radar.example)"  # SEC 要求
     yfinance_rate_limit_per_sec: float = 1.0
 

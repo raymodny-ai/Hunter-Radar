@@ -460,8 +460,9 @@ async def run_daily_pipeline(
             from etl.sec_form4 import run as sec_run
             from app.services.insider import BuybackEvent
 
-            # M1 阶段 sec_run 仍为 stub,M2 接入真实 CIK 解析
-            form_rows = await sec_run("placeholder", trade_date)
+            # M2 (2026-07-28): 真实 CIK 解析 + universe Form 4 抓取
+            from etl.sec_form4 import run_universe as sec_run_universe
+            form_rows = await sec_run_universe(trade_date)
             res_f4 = await load_form4(form_rows)
             res_bb = await load_buyback([])  # M2 接 8-K 解析后才有 BuybackEvent
             await mark_ready(
