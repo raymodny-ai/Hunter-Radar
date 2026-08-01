@@ -283,7 +283,7 @@ async def _compute_threat_score(ticker: str, session: AsyncSession) -> ThreatSco
             """SELECT symbol, symbol_type, module_options, module_short,
                       module_divergence, module_insider, weights,
                       total, total_raw, ema_halflife, signal_lifecycle,
-                      nl_summary, regime
+                      nl_summary, regime, data_quality
                FROM threat_score_daily
                WHERE symbol = :sym AND trade_date = :td
                LIMIT 1"""
@@ -307,7 +307,15 @@ async def _compute_threat_score(ticker: str, session: AsyncSession) -> ThreatSco
     def _g(idx): return d[idx]
     # SQL: symbol(0), symbol_type(1), module_options(2), module_short(3),
     #      module_divergence(4), module_insider(5), weights(6), total(7),
-    #      total_raw(8), ema_halflife(9), signal_lifecycle(10), nl_summary(11), regime(12)
+    #      total_raw(8), ema_halflife(9), signal_lifecycle(10), nl_summary(11), regime(12),
+    #      data_quality(13)
+
+    # V1.6.1: 优先读持久化的 data_quality（load 时由 services.threat_score 计算）；
+    # 历史行无此列时为 NULL → fallback 到按模块值推导，避免 DTO 字段形同虚设（IMPL-DQ-002 断裂点 3）。
+    persisted_q = _g(13) if len(d) > 13 else None
+    computed_q = "stale" if warmup else (
+        "degraded" if (float(_g(2) or 0) == 0 and float(_g(3) or 0) == 0) else "complete"
+    )
     return ThreatScoreDTO(
         trade_date=target_date,
         symbol=t,
@@ -323,11 +331,8 @@ async def _compute_threat_score(ticker: str, session: AsyncSession) -> ThreatSco
         signal_lifecycle=_g(10) or "init",
         regime=_g(12) or "normal",
         nl_summary=_g(11),
-        data_warmup=False,
-        # V1.6.1: 数据质量判断——模块全为 0 且 warmup 时标记 stale
-        data_quality="stale" if warmup else (
-            "degraded" if (float(_g(2) or 0) == 0 and float(_g(3) or 0) == 0) else "complete"
-        ),
+        data_warmup=warmup,
+        data_quality=persisted_q if persisted_q else computed_q,
     )
 
 

@@ -91,6 +91,11 @@ class ThreatScoreDaily(Base):
     signal_lifecycle: Mapped[str] = mapped_column(Text, nullable=False, default="init")
     nl_summary: Mapped[str | None] = mapped_column(Text)
     regime: Mapped[str | None] = mapped_column(Text)
+    # V1.6.1: 数据质量标记（complete / degraded / stale）——由 services.threat_score
+    # 在打分时动态计算，落库供 API/前端消费（IMPL-DQ-002 断裂点 3）。
+    data_quality: Mapped[str | None] = mapped_column(
+        Text, nullable=True, default=None, server_default=None
+    )
     computed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 

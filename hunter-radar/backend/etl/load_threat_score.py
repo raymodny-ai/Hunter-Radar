@@ -541,6 +541,7 @@ async def compute_threat_scores(
                     "signal_lifecycle": lifecycle,
                     "nl_summary": None,  # BD-065 由 nl_summary service 后续填充
                     "regime": "normal",  # M3 接 BD-063 后改为 dynamic
+                    "data_quality": score.get("data_quality", "complete"),
                 }
             )
 
@@ -581,6 +582,7 @@ async def compute_threat_scores(
                 "total_raw": stmt.excluded.total_raw,
                 "ema_halflife": stmt.excluded.ema_halflife,
                 "signal_lifecycle": stmt.excluded.signal_lifecycle,
+                "data_quality": stmt.excluded.data_quality,
             },
         )
         rs = await session.execute(stmt)
