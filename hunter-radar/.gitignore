@@ -8,8 +8,11 @@ __pycache__/
 .mypy_cache/
 htmlcov/
 .coverage
+
+# 环境变量(V1.6.1: 严禁提交任何 .env 文件)
 .env
-.env.local
+.env.*
+!.env.example
 
 # 前端
 node_modules/

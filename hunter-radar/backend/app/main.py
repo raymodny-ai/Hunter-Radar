@@ -19,6 +19,7 @@ from app.api import (
     alerts,
     analytics,
     attribution,
+    auth,
     basket,
     data_status,
     edgar,
@@ -161,6 +162,8 @@ app.include_router(push.router, prefix="/api/v1", tags=["push"])
 app.include_router(data_status.router, prefix="/api/v1", tags=["data-status"])
 # m5t8 FE-064 BD-076 配额查询端点
 app.include_router(quota.router, prefix="/api/v1", tags=["auth"])
+# V1.6.1 JWT refresh 轮换端点
+app.include_router(auth.router, prefix="/api/v1", tags=["auth"])
 
 # m6t7 灰度发布 flag 端点
 app.include_router(feature_flags.router, prefix="/api/v1", tags=["feature-flags"])

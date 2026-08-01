@@ -87,18 +87,20 @@ def percentile_to_score(p: float | None) -> float:
 
 def compute_threat_score(
     *,
-    module_options: float,
-    module_short: float,
-    module_divergence: float,
-    module_insider: float,
+    module_options: float | None = None,
+    module_short: float | None = None,
+    module_divergence: float | None = None,
+    module_insider: float | None = None,
     weights: dict[str, float],
     ema_halflife_days: int = 2,
     history: Sequence[dict] | None = None,
 ) -> dict:
     """计算单标的当日的 Threat Score(原始 + EMA 平滑)。
 
+    V1.6.1: NULL ≠ 0 —— 模块返回 None 时从加权平均中排除并重新归一化权重。
+
     参数:
-        module_* : 各模块子评分(0–100)
+        module_* : 各模块子评分(0–100),None 表示数据缺失(排除)
         weights   : 个股/ETF 权重,例 {"options":0.30,"short":0.35,"divergence":0.20,"insider":0.15}
         ema_halflife_days: OQ-02 决策
         history   : 历史上 N 日的 `{date, module_options, module_short, ...}` 列表(按日期升序),
@@ -109,28 +111,55 @@ def compute_threat_score(
             "raw": <float>,       # 当日原始加权
             "ema": <float>,       # EMA 平滑后
             "lifecycle": <str>,   # 'init'|'red'|'yellow'|'gray'|'green'
+            "modules_active": <list[str]>,  # 参与计算的有效模块
+            "data_quality": <str>,  # 'complete'|'degraded'
         }
     """
-    if abs(sum(weights.values()) - 1.0) > 1e-6:
-        raise ValueError(f"weights must sum to 1.0, got {sum(weights.values())}")
+    # V1.6.1: 收集有效模块(排除 None)
+    modules: dict[str, float | None] = {
+        "options": module_options,
+        "short": module_short,
+        "divergence": module_divergence,
+        "insider": module_insider,
+    }
+    active = {k: v for k, v in modules.items() if v is not None and k in weights}
 
-    raw_today = (
-        weights.get("options", 0) * module_options
-        + weights.get("short", 0) * module_short
-        + weights.get("divergence", 0) * module_divergence
-        + weights.get("insider", 0) * module_insider
-    )
+    if not active:
+        # 所有模块缺失——无法计算
+        return {
+            "raw": 0.0,
+            "ema": 0.0,
+            "ema_series": [0.0],
+            "modules_active": [],
+            "data_quality": "stale",
+        }
+
+    # 重新归一化权重(排除 None 模块后总和可能 < 1.0)
+    total_weight = sum(weights[k] for k in active)
+    if total_weight < 1e-9:
+        total_weight = 1.0
+
+    raw_today = sum(active[k] * weights[k] / total_weight for k in active)
+
+    # 数据质量标记
+    all_modules = {k for k in weights if weights[k] > 0}
+    data_quality = "complete" if set(active.keys()) >= all_modules else "degraded"
 
     if history:
-        scores_history = [
-            (
-                weights.get("options", 0) * h.get("module_options", 0)
-                + weights.get("short", 0) * h.get("module_short", 0)
-                + weights.get("divergence", 0) * h.get("module_divergence", 0)
-                + weights.get("insider", 0) * h.get("module_insider", 0)
-            )
-            for h in history
-        ]
+        scores_history = []
+        for h in history:
+            h_active = {
+                k: h.get(f"module_{k}")
+                for k in weights
+                if h.get(f"module_{k}") is not None
+            }
+            if h_active:
+                h_total_w = sum(weights[k] for k in h_active)
+                scores_history.append(
+                    sum(h_active[k] * weights[k] / h_total_w for k in h_active)
+                )
+            else:
+                scores_history.append(0.0)
         scores_history.append(raw_today)
     else:
         scores_history = [raw_today]
@@ -142,6 +171,8 @@ def compute_threat_score(
         "raw": round(raw_today, 2),
         "ema": round(min(ema_today, 100.0), 2),  # Min(Score, 100) 硬截断
         "ema_series": [round(min(x, 100.0), 2) for x in ema_series],
+        "modules_active": sorted(active.keys()),
+        "data_quality": data_quality,
     }
 
 
@@ -216,16 +247,26 @@ def decide_lifecycle(
     red_threshold: float,
     yellow_threshold: float = 50.0,
     green_threshold: float = 30.0,
+    *,
+    raw_score: float | None = None,
+    panic_threshold: float = 80.0,
 ) -> str:
-    """根据 EMA 后总分(严禁用原始分)决定信号灯。
+    """根据 EMA 后总分决定信号灯。
+
+    V1.6.1 EMA 尖峰覆盖: raw_score ≥ panic_threshold 时直接判定 "red",
+    避免 2 日 EMA 半衰期延迟急性威胁检测。
 
     | 区间          | 颜色 |
     | ------------- | ---- |
+    | raw >= panic  | red  (尖峰覆盖)
     | ema >= red    | red  |
     | red > ema >= yellow | yellow |
     | yellow > ema >= green | gray |
     | ema < green   | green |
     """
+    # V1.6.1: 尖峰覆盖——原始分超过 panic 阈值时立即红灯
+    if raw_score is not None and raw_score >= panic_threshold:
+        return "red"
     if ema_score >= red_threshold:
         return "red"
     if ema_score >= yellow_threshold:

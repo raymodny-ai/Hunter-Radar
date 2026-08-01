@@ -72,6 +72,7 @@ export const api = {
       regime: "normal" | "panic";
       nl_summary: string | null;
       data_warmup: boolean;
+      data_quality: "complete" | "degraded" | "stale";
     }>(`/symbols/${ticker}/threat`),
 
   getThreatHistory: (ticker: string, days = 90) =>

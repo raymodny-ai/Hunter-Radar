@@ -73,6 +73,71 @@ class ScraperResult:
 
 # ---- 1.3 核心爬虫(Playwright 严格 async with) ----
 
+# V1.6.1: Playwright 熔断器
+import time as _time
+
+
+class CircuitOpen(Exception):
+    """熔断器开启时抛出。"""
+
+
+class ATSCircuitBreaker:
+    """V1.6.1 ATS 爬虫熔断器。
+
+    连续失败 max_failures 次后开启熔断,冷却 cooldown_min 分钟后半开允许一次重试。
+    """
+
+    def __init__(self, max_failures: int = 3, cooldown_min: int = 30):
+        self.failures = 0
+        self.max_failures = max_failures
+        self.cooldown_sec = cooldown_min * 60
+        self.opened_at: float | None = None
+
+    @property
+    def is_open(self) -> bool:
+        if self.failures < self.max_failures:
+            return False
+        if self.opened_at is None:
+            return False
+        elapsed = _time.time() - self.opened_at
+        if elapsed >= self.cooldown_sec:
+            # 半开: 允许一次重试
+            return False
+        return True
+
+    def record_success(self) -> None:
+        self.failures = 0
+        self.opened_at = None
+
+    def record_failure(self) -> None:
+        self.failures += 1
+        self.opened_at = _time.time()
+        if self.failures >= self.max_failures:
+            log.warning(
+                "ats.circuit_breaker.open",
+                failures=self.failures,
+                cooldown_min=self.cooldown_sec // 60,
+            )
+
+    async def call(self, coro_fn, *args, **kwargs):
+        """执行异步函数,熔断器开启时拒绝执行。"""
+        if self.is_open:
+            raise CircuitOpen(
+                f"ATS scraper circuit open ({self.failures} failures, "
+                f"cooldown {self.cooldown_sec // 60}min)"
+            )
+        try:
+            result = await coro_fn(*args, **kwargs)
+            self.record_success()
+            return result
+        except Exception:
+            self.record_failure()
+            raise
+
+
+# 全局熔断器实例
+ats_circuit_breaker = ATSCircuitBreaker(max_failures=3, cooldown_min=30)
+
 # FINRA ATS Transparency Data URL 模板
 _FINRA_ATS_URL = (
     "https://www.finra.org/finra-data/market-transparency-data/"

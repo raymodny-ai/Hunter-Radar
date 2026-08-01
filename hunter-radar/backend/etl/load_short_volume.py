@@ -17,7 +17,7 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -81,19 +81,22 @@ def _build_payload(
 
 
 async def _bulk_insert(session: AsyncSession, payload: list[dict]) -> int:
-    """批量 upsert 风格插入,使用 ON CONFLICT DO NOTHING。
+    """批量 upsert 插入,使用 ON CONFLICT DO UPDATE(V1.6.1 数据可修正性)。
 
-    返回实际新插入的行数(postgres RETURNING 不可用,故用 rowcount)。
+    返回实际影响的行数(rowcount)。
     """
     if not payload:
         return 0
-    stmt = (
-        pg_insert(ShortVolume)
-        .values(payload)
-        .on_conflict_do_nothing(index_elements=["trade_date", "symbol", "source"])
+    stmt = pg_insert(ShortVolume).values(payload)
+    stmt = stmt.on_conflict_do_update(
+        index_elements=["trade_date", "symbol", "source"],
+        set_={
+            "short_volume": stmt.excluded.short_volume,
+            "non_short_volume": stmt.excluded.non_short_volume,
+            "updated_at": func.now(),
+        },
     )
     rs = await session.execute(stmt)
-    # rowcount 在 ON CONFLICT 路径下,psycopg2/asyncpg 都返回真实插入数
     return rs.rowcount or 0
 
 

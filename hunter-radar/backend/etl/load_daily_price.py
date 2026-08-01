@@ -5,7 +5,7 @@ import logging
 from dataclasses import dataclass
 from datetime import date
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -68,10 +68,18 @@ async def load_daily_price(
 
         if payload:
             table = Symbol.__table__.metadata.tables["daily_price"]
-            stmt = (
-                pg_insert(table)
-                .values(payload)
-                .on_conflict_do_nothing(index_elements=["trade_date", "symbol", "source"])
+            stmt = pg_insert(table).values(payload)
+            stmt = stmt.on_conflict_do_update(
+                index_elements=["trade_date", "symbol", "source"],
+                set_={
+                    "open": stmt.excluded.open,
+                    "high": stmt.excluded.high,
+                    "low": stmt.excluded.low,
+                    "close": stmt.excluded.close,
+                    "adj_close": stmt.excluded.adj_close,
+                    "volume": stmt.excluded.volume,
+                    "updated_at": func.now(),
+                },
             )
             rs = await session.execute(stmt)
             inserted = rs.rowcount or 0

@@ -41,6 +41,7 @@ class ThreatScoreDTO(BaseModel):
     regime: Literal["normal", "panic"]
     nl_summary: str | None
     data_warmup: bool = False
+    data_quality: Literal["complete", "degraded", "stale"] = "complete"  # V1.6.1
 
 
 class OptionsAnomalyDTO(BaseModel):
@@ -328,6 +329,10 @@ async def _compute_threat_score(ticker: str, session: AsyncSession) -> ThreatSco
         regime=_g(12) or "normal",
         nl_summary=_g(11),
         data_warmup=False,
+        # V1.6.1: 数据质量判断——模块全为 0 且 warmup 时标记 stale
+        data_quality="stale" if warmup else (
+            "degraded" if (float(_g(2) or 0) == 0 and float(_g(3) or 0) == 0) else "complete"
+        ),
     )
 
 

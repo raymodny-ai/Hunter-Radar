@@ -16,6 +16,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import subprocess
 import sys
 from datetime import datetime, timezone
@@ -24,6 +25,8 @@ from pathlib import Path
 from fastapi import APIRouter, Depends, Header, HTTPException, Request
 
 from app.core.auth import TUser, require_admin_role, require_super_admin_role
+
+log = logging.getLogger(__name__)
 
 router = APIRouter()
 
@@ -38,13 +41,7 @@ def _resolve_auth_mode(
     user: TUser,
     x_admin_api_key: str | None = Header(default=None, alias="X-Admin-API-Key"),
 ) -> str:
-    """返当前 admin 鉴权模式(V1.5.3 接力期 m11t2 简化版)。
-
-    V1.5.3 变更(m11t2):
-    - IP 白名单校验已合并到 `require_admin_role` 内部(Request 注入)
-    - 本函数仅判断 auth_mode 标签,不重复校验 IP
-    - 调用顺序:require_admin_role 先过 IP 白名单,过了才进本函数
-    - 故不会出现 IP 限定却走到的路径
+    """V1.6.1: 返当前 admin 鉴权模式 + 审计日志。
 
     优先级:
     1. 走 API key 头 → "prod_admin_apikey"
@@ -55,16 +52,31 @@ def _resolve_auth_mode(
 
     # 1) API key
     if _check_api_key(x_admin_api_key):
-        return "prod_admin_apikey"
-    # 2) JWT role=admin
-    from uuid import UUID
-    try:
-        is_real_user = UUID(str(user.user_id)) != SANDBOX_PLACEHOLDER_USER_ID
-    except Exception:  # noqa: BLE001
-        is_real_user = False
-    if user.is_admin and is_real_user:
-        return "prod_admin_jwt"
-    return "sandbox_skip_admin"
+        mode = "prod_admin_apikey"
+    else:
+        # 2) JWT role=admin
+        from uuid import UUID
+        try:
+            is_real_user = UUID(str(user.user_id)) != SANDBOX_PLACEHOLDER_USER_ID
+        except Exception:  # noqa: BLE001
+            is_real_user = False
+        if user.is_admin and is_real_user:
+            mode = "prod_admin_jwt"
+        else:
+            mode = "sandbox_skip_admin"
+
+    # V1.6.1: Admin 审计日志(who/when/endpoint)
+    log.info(
+        "admin.audit",
+        who=str(user.user_id),
+        role=user.role,
+        auth_mode=mode,
+        endpoint=str(request.url.path),
+        method=request.method,
+        client_ip=request.client.host if request.client else "unknown",
+        timestamp=datetime.now(tz=timezone.utc).isoformat(),
+    )
+    return mode
 
 
 @router.post("/admin/etl/run", summary="触发 BD-085 真实数据集 ETL(沙箱 stub)")

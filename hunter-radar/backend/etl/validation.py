@@ -416,3 +416,74 @@ def validate_batch(
                 outliers=vr.outlier_count,
             )
     return results
+
+
+# ---- V1.6.1 行数对账 ----
+
+from enum import Enum
+
+
+class BatchStatus(str, Enum):
+    """批次数据完整性状态。"""
+    COMPLETE = "complete"
+    PARTIAL = "partial"
+    EMPTY = "empty"
+
+
+async def reconcile_batch(
+    session,
+    table_name: str,
+    trade_date: date,
+    expected_min: int,
+    *,
+    threshold: float = 0.8,
+) -> BatchStatus:
+    """行数对账: 检查实际入库行数是否达到预期最小值。
+
+    actual/expected < threshold 时标记 PARTIAL 并告警。
+
+    Args:
+        session: AsyncSession
+        table_name: 表名(如 "short_volume")
+        trade_date: 交易日
+        expected_min: 预期最小行数
+        threshold: 完整性阈值(默认 0.8)
+
+    Returns:
+        BatchStatus.COMPLETE | BatchStatus.PARTIAL | BatchStatus.EMPTY
+    """
+    from sqlalchemy import func as sa_func, select as sa_select
+
+    from app.models import Symbol
+
+    table = Symbol.__table__.metadata.tables.get(table_name)
+    if table is None:
+        log.warning("reconcile.table_not_found", table=table_name)
+        return BatchStatus.EMPTY
+
+    actual = await session.scalar(
+        sa_select(sa_func.count()).select_from(table).where(table.c.trade_date == trade_date)
+    ) or 0
+
+    if actual == 0:
+        log.warning(
+            "reconcile.empty",
+            table=table_name,
+            trade_date=str(trade_date),
+            expected_min=expected_min,
+        )
+        return BatchStatus.EMPTY
+
+    ratio = actual / max(expected_min, 1)
+    if ratio < threshold:
+        log.warning(
+            "reconcile.partial",
+            table=table_name,
+            trade_date=str(trade_date),
+            actual=actual,
+            expected_min=expected_min,
+            ratio=f"{ratio:.0%}",
+        )
+        return BatchStatus.PARTIAL
+
+    return BatchStatus.COMPLETE

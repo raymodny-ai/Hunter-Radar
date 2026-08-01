@@ -5,7 +5,7 @@ import os
 from functools import lru_cache
 from pathlib import Path
 
-from pydantic import Field
+from pydantic import Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -43,9 +43,14 @@ class Settings(BaseSettings):
     cache_ttl_report_seconds: int = 43200  # 12h
 
     # ---- Security ----
-    secret_key: str = "dev-only-change-me-in-prod-32-bytes-min"
+    # 生产环境必须通过 SECRET_KEY 环境变量覆盖(≥32 字符,不含 "dev-only")
+    secret_key: str = Field(
+        default="dev-only-change-me-in-prod-32-bytes-min",
+        description="REQUIRED in production; must be >= 32 chars and not contain 'dev-only'",
+    )
     jwt_algorithm: str = "HS256"
-    jwt_expire_minutes: int = 60 * 24 * 7  # 7 天
+    jwt_expire_minutes: int = 30  # V1.6.1: 从 7 天缩短至 30 分钟
+    jwt_refresh_expire_days: int = 7  # V1.6.1: refresh token 有效期
     cors_origins: list[str] = ["http://localhost:5173", "http://localhost:3000"]
 
     # ---- OAuth / Magic Link ----
@@ -137,6 +142,27 @@ class Settings(BaseSettings):
 
     # ---- Paths ----
     project_root: Path = Path(__file__).resolve().parents[2]
+
+    @model_validator(mode="after")
+    def _check_production_secrets(self) -> "Settings":
+        """生产环境启动守卫:拒绝不安全的 secret_key 与 CORS 配置。"""
+        if self.is_production:
+            if "dev-only" in self.secret_key:
+                raise RuntimeError(
+                    "FATAL: default secret_key detected in production. "
+                    "Set SECRET_KEY env var (>= 32 chars)."
+                )
+            if len(self.secret_key) < 32:
+                raise RuntimeError(
+                    f"FATAL: secret_key too short ({len(self.secret_key)} chars, need >= 32)."
+                )
+            # CORS 生产守卫:不允许 localhost origin
+            for origin in self.cors_origins:
+                if "localhost" in origin or "127.0.0.1" in origin:
+                    raise RuntimeError(
+                        f"FATAL: CORS origin '{origin}' not allowed in production."
+                    )
+        return self
 
     @property
     def is_production(self) -> bool:

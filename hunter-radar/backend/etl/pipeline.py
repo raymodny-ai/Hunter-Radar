@@ -46,6 +46,86 @@ from etl.validation import (
 log = logging.getLogger(__name__)
 
 
+# ---- V1.6.1 通用验证门控 ----
+
+
+class PipelineAbort(Exception):
+    """critical 验证失败时中止批次。"""
+
+
+async def _quarantine_batch(
+    stage: str,
+    trade_date: date,
+    data_count: int,
+    critical_errors: list,
+) -> None:
+    """将 critical 验证失败的批次写入 quarantine 记录(data_ingestion_status 表)。
+
+    沙箱环境无 DB 时降级为仅日志。
+    """
+    try:
+        from etl.refresh_data_status import mark_failed
+
+        error_summary = f"quarantine: {len(critical_errors)} critical errors in {stage}"
+        await mark_failed(trade_date, stage, error=error_summary)
+    except Exception:  # noqa: BLE001
+        pass
+    log.error(
+        "pipeline.quarantine",
+        stage=stage,
+        trade_date=str(trade_date),
+        data_count=data_count,
+        critical_count=len(critical_errors),
+        errors=[str(e) for e in critical_errors[:5]],
+    )
+
+
+async def _load_with_gate(
+    loader_fn,
+    validator_fn,
+    data: list,
+    *,
+    stage: str,
+    trade_date: date,
+    validator_kwargs: dict | None = None,
+) -> Any:
+    """V1.6.1 通用门控: 先验证再入库,critical 时 quarantine + 中止。
+
+    Args:
+        loader_fn: 异步落库函数 (data) -> LoadResult
+        validator_fn: 校验函数 (data, **kwargs) -> ValidationResult
+        data: 待入库数据
+        stage: 阶段名(用于日志/报告)
+        trade_date: 交易日
+        validator_kwargs: 传给 validator_fn 的额外参数
+
+    Returns:
+        loader_fn 的返回值
+
+    Raises:
+        PipelineAbort: critical 验证失败时
+    """
+    vr: ValidationResult = validator_fn(data, **(validator_kwargs or {}))
+
+    critical = [w for w in vr.warnings if w.severity == "critical"]
+    if critical:
+        await _quarantine_batch(stage, trade_date, len(data), critical)
+        raise PipelineAbort(
+            f"{stage}: {len(critical)} critical validation failures — batch quarantined"
+        )
+
+    # soft warnings: 记录但继续
+    if vr.warnings:
+        log.warning(
+            "pipeline.validation.soft_warnings",
+            stage=stage,
+            trade_date=str(trade_date),
+            warning_count=len(vr.warnings),
+        )
+
+    return await loader_fn(data)
+
+
 async def _compute_historical_short_p99(
     trade_date: date,
     *,
@@ -130,15 +210,18 @@ async def run_daily_pipeline(
     *,
     skip_yahoo: bool = False,
     skip_sec: bool = False,
+    force_refresh: bool = False,
 ) -> PipelineReport:
     """M1 末 → M2 流水线主入口。
 
     V1.6.0: 使用 DataProviderManager 多源降级框架取数。
+    V1.6.1: 添加 --force-refresh 支持(DELETE + re-insert)。
 
     Args:
         trade_date: 计算当日
         skip_yahoo: True 时跳过 yfinance 拉取(便于回测 / 离线场景)
         skip_sec: True 时跳过 SEC 拉取(stub 阶段)
+        force_refresh: True 时先删除目标日期数据再重新插入
     """
     from etl.finra_short import run as finra_run
     from etl.market_data_provider import DataProviderManager
@@ -148,6 +231,29 @@ async def run_daily_pipeline(
     provider_mgr = DataProviderManager()
 
     report = PipelineReport(trade_date=trade_date)
+
+    # V1.6.1: --force-refresh 先删除目标日期数据
+    if force_refresh:
+        log.warning("pipeline.force_refresh", trade_date=str(trade_date))
+        try:
+            from sqlalchemy import delete as sa_delete
+
+            from app.core.database import AsyncSessionLocal
+            from app.models import Symbol as _Sym
+
+            _mutable_tables = ["daily_price", "short_volume", "options_chain"]
+            async with AsyncSessionLocal() as _fr_sess:
+                for _tbl_name in _mutable_tables:
+                    _tbl = _Sym.__table__.metadata.tables.get(_tbl_name)
+                    if _tbl is not None:
+                        await _fr_sess.execute(
+                            sa_delete(_tbl).where(_tbl.c.trade_date == trade_date)
+                        )
+                await _fr_sess.commit()
+            report.stage("force_refresh", deleted_tables=_mutable_tables)
+        except Exception as e:  # noqa: BLE001
+            log.error("pipeline.force_refresh.fail", error=str(e))
+            report.add_error("force_refresh", str(e))
 
     # ---- 1) 拉取 + 落库 daily_price ----
     if not skip_yahoo:
@@ -473,12 +579,15 @@ async def run_daily_pipeline(
 
 
 async def main() -> None:
-    """CLI:`uv run python -m etl.pipeline [YYYY-MM-DD]`"""
+    """CLI:`uv run python -m etl.pipeline [YYYY-MM-DD] [--force-refresh]`"""
     import asyncio
     import sys
 
-    target = date.fromisoformat(sys.argv[1]) if len(sys.argv) > 1 else date.today()
-    report = await run_daily_pipeline(target)
+    args = sys.argv[1:]
+    force_refresh = "--force-refresh" in args
+    positional = [a for a in args if not a.startswith("--")]
+    target = date.fromisoformat(positional[0]) if positional else date.today()
+    report = await run_daily_pipeline(target, force_refresh=force_refresh)
     print(report.summary())
     if not report.ok():
         import sys as _s

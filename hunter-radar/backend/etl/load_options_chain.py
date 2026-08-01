@@ -20,7 +20,7 @@ from dataclasses import dataclass
 from datetime import date
 from typing import Iterable
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -123,8 +123,18 @@ async def load_options_chain(
         if payload:
             table = Symbol.__table__.metadata.tables["options_chain"]
             stmt = pg_insert(table).values(payload)
-            stmt = stmt.on_conflict_do_nothing(
-                index_elements=["trade_date", "contract", "source"]
+            stmt = stmt.on_conflict_do_update(
+                index_elements=["trade_date", "contract", "source"],
+                set_={
+                    "last_price": stmt.excluded.last_price,
+                    "bid": stmt.excluded.bid,
+                    "ask": stmt.excluded.ask,
+                    "volume": stmt.excluded.volume,
+                    "open_interest": stmt.excluded.open_interest,
+                    "implied_vol": stmt.excluded.implied_vol,
+                    "in_the_money": stmt.excluded.in_the_money,
+                    "updated_at": func.now(),
+                },
             )
             rs = await session.execute(stmt)
             inserted = rs.rowcount or 0

@@ -506,7 +506,12 @@ async def compute_threat_scores(
 
             # 5 态(red 阈值 M2 默认 70;M3 接 regime 后调整为 80)
             red_thr = settings.threat_red_threshold
-            lifecycle = decide_lifecycle(ema, red_threshold=float(red_thr))
+            panic_thr = settings.threat_red_threshold_panic
+            # V1.6.1: 传入 raw_score 启用尖峰覆盖
+            lifecycle = decide_lifecycle(
+                ema, red_threshold=float(red_thr),
+                raw_score=raw, panic_threshold=float(panic_thr),
+            )
 
             # 连续 ≥ N 日高分 → 升级(此处只记 base,不直接生成终极警报;留给 BD-062 状态机)
             # 仅统计
@@ -537,6 +542,24 @@ async def compute_threat_scores(
                     "nl_summary": None,  # BD-065 由 nl_summary service 后续填充
                     "regime": "normal",  # M3 接 BD-063 后改为 dynamic
                 }
+            )
+
+            # V1.6.1: 评分审计日志(完整分解可复现)
+            log.info(
+                "threat_score.computed",
+                symbol=sym,
+                trade_date=str(trade_date),
+                raw_modules={
+                    "options": round(mod_opts, 2),
+                    "short": round(mod_short, 2),
+                    "divergence": round(mod_div, 2),
+                    "insider": round(mod_insider, 2),
+                },
+                weights_applied=weights,
+                raw_score=round(raw, 2),
+                ema_score=round(ema, 2),
+                lifecycle=lifecycle,
+                data_quality=score.get("data_quality", "complete"),
             )
 
         if not payload:

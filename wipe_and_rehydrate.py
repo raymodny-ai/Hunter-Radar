@@ -2,13 +2,22 @@
 """V1.7.5: 全量 wipe + 重新 ETL 数据保留 symbol_master + 用户表 (app_user/alert_rule/...).
 
 绕开 asyncpg 默认 ::1 解析问题:用 psql 命令做 truncate + 用 urllib 触发 API 重新 warmup。
+
+V1.6.1 安全防护:
+- --confirm: 必须显式确认才执行
+- --env: 指定环境(development/staging/production)
+- --dry-run: 仅显示将要执行的操作,不实际执行
+- 生产环境 10 秒中止窗口(Ctrl+C 取消)
 """
 from __future__ import annotations
 
+import argparse
 import json
 import logging
+import os
 import subprocess
 import sys
+import time
 import urllib.request
 from pathlib import Path
 
@@ -172,8 +181,34 @@ def step3_trigger_rewarmup() -> None:
 
 
 def main() -> None:
+    # V1.6.1: 安全防护参数
+    parser = argparse.ArgumentParser(description="Wipe & Rehydrate Hunter Radar data")
+    parser.add_argument("--confirm", action="store_true", help="必须显式确认才执行")
+    parser.add_argument("--env", default=os.getenv("ENV", "development"),
+                        help="环境: development|staging|production")
+    parser.add_argument("--dry-run", action="store_true", help="仅显示将要执行的操作")
+    args = parser.parse_args()
+
+    if not args.confirm:
+        print("REFUSED: wipe requires --confirm flag. Usage: python wipe_and_rehydrate.py --confirm")
+        sys.exit(1)
+
+    if args.env == "production":
+        print("\u26a0\ufe0f  PRODUCTION WIPE — 10 second abort window (Ctrl+C to cancel)")
+        try:
+            time.sleep(10)
+        except KeyboardInterrupt:
+            print("\nAborted by user.")
+            sys.exit(0)
+
+    if args.dry_run:
+        print(f"[DRY RUN] Would TRUNCATE CASCADE: {', '.join(TRUNCATE_TABLES)}")
+        print(f"[DRY RUN] Would flush Redis cache/opt/warmup keys")
+        print(f"[DRY RUN] Would trigger rewarmup via POST /symbols")
+        return
+
     log.info("=" * 60)
-    log.info("V1.7.5 WIPE & REHYDRATE START")
+    log.info("V1.7.5 WIPE & REHYDRATE START (env=%s)", args.env)
     log.info("=" * 60)
     step1_truncate()
     step2_flush_redis()
