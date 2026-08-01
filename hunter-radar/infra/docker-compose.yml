@@ -2,6 +2,10 @@
 # 一键起: docker compose up -d
 # 停服务: docker compose down
 # 重置数据: docker compose down -v
+#
+# 2026-07-22 host-port patches (raymodny NAS, OpenClaw owns 5432):
+#   - postgres   5432 -> 5433  (避开 OpenClaw 自家 PG)
+#   - container  internal URL 仍走 :5432 (compose ports 是 host-bind,不影响 docker network)
 
 networks:
   hunter-net:
@@ -9,14 +13,17 @@ networks:
 
 services:
   postgres:
-    image: postgres:16-alpine
+    build:
+      context: ./pgvector
+      dockerfile: Dockerfile
+    image: hunter-postgres-pgvector:local
     container_name: hunter_postgres
     environment:
       POSTGRES_USER: hunter
       POSTGRES_PASSWORD: hunter
       POSTGRES_DB: hunter_radar
     ports:
-      - "5432:5432"
+      - "5433:5432"   # host 5433 -> container 5432 (avoid OpenClaw PG @ host 5432)
     volumes:
       - hunter_pg_data:/var/lib/postgresql/data
       - ../backend/sql:/docker-entrypoint-initdb.d:ro
@@ -72,13 +79,31 @@ services:
       AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://airflow:airflow@airflow-db/airflow
       AIRFLOW__CORE__LOAD_EXAMPLES: "false"
       AIRFLOW__WEBSERVER__EXPOSE_CONFIG: "true"
+      # 2026-07-23 patch: 让 DAG 能 import sibling /opt/airflow/etl 和 /opt/airflow/app
+      # (etl/* 里 from app.core.database / app.models 等;PYTHONPATH=/opt/airflow 配 host bind mount 一起)
+      PYTHONPATH: "/opt/airflow:/opt/airflow/app"
+      # 2026-07-23 patch (rev2): 回滚 _PIP_ADDITIONAL_REQUIREMENTS 到基线,避免 sqlalchemy 2.0 触发 airflow 升级
+      # 装 sqlalchemy 2.0 会触发 flask-appbuilder 冲突 → pip resolver 强升 airflow 到 3.x → 容器 entrypoint 找不到 airflow 命令 → 崩溃
+      # 真修复见 DAG 里改用 BashOperator + host venv 跑 ETL (或者把 etl 重构成不依赖 app)
       _PIP_ADDITIONAL_REQUIREMENTS: "apache-airflow-providers-postgres apache-airflow-providers-redis httpx tenacity beautifulsoup4 lxml pandas numpy scipy yfinance"
     ports:
       - "8080:8080"
     volumes:
       - ../backend/dags:/opt/airflow/dags:ro
       - ../backend/etl:/opt/airflow/etl:ro
+      # 2026-07-23 patch: mount backend app/ 让 DAG 能 from app.xxx
+      - ../backend/app:/opt/airflow/app:ro
+      # 2026-07-23 patch: mount backend scripts/ 让 _ensure_etl_runner.sh 能找 etl_runner.py
+      - ../backend/scripts:/opt/airflow/scripts:ro
+      # 2026-07-23 patch: mount docker socket 让 BashOperator 能 docker exec 到 backend 跑 ETL
+      - /var/run/docker.sock:/var/run/docker.sock
+    # 2026-07-23 patch: 不改 user (root 会破 entrypoint _PIP_ADDITIONAL_REQUIREMENTS)。
+    # 改方案:用 entrypoint 把 airflow 加进 host docker group (gid 994)
+    group_add:
+      - "994"
     command: webserver
+    networks:
+      - hunter-net
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
       interval: 30s
@@ -94,11 +119,25 @@ services:
     environment:
       AIRFLOW__CORE__EXECUTOR: LocalExecutor
       AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://airflow:airflow@airflow-db/airflow
+      # 2026-07-23 patch: scheduler 也需要 PYTHONPATH 看到 app/
+      PYTHONPATH: "/opt/airflow:/opt/airflow/app"
+      # 2026-07-23 patch (rev2): scheduler 同上回滚
       _PIP_ADDITIONAL_REQUIREMENTS: "apache-airflow-providers-postgres apache-airflow-providers-redis httpx tenacity beautifulsoup4 lxml pandas numpy scipy yfinance"
     volumes:
       - ../backend/dags:/opt/airflow/dags:ro
       - ../backend/etl:/opt/airflow/etl:ro
+      # 2026-07-23 patch: mount backend app/ 让 scheduler DAG 也能 from app.xxx
+      - ../backend/app:/opt/airflow/app:ro
+      # 2026-07-23 patch: mount backend scripts/ 让 scheduler 也能跑 ETL runner
+      - ../backend/scripts:/opt/airflow/scripts:ro
+      # 2026-07-23 patch: scheduler 也需要 docker socket (跑 task 时用)
+      - /var/run/docker.sock:/var/run/docker.sock
+    # 2026-07-23 patch: scheduler 也加 docker group
+    group_add:
+      - "994"
     command: scheduler
+    networks:
+      - hunter-net
 
   # V1.6.0: Backend API service
   backend:
@@ -108,10 +147,13 @@ services:
     container_name: hunter_backend
     ports:
       - "8000:8000"
+    env_file:
+      - ../backend/.env
     environment:
       DATABASE_URL: postgresql+asyncpg://hunter:hunter@postgres:5432/hunter_radar
       REDIS_URL: redis://redis:6379/0
       ENV: production
+      FRONTEND_DIST: /app/frontend/dist  # 容器化部署时 SPA dist 在该路径
     depends_on:
       postgres:
         condition: service_healthy
@@ -119,6 +161,11 @@ services:
         condition: service_healthy
     networks:
       - hunter-net
+    # 2026-07-23 patch (FE-160 ext): backend 需要 docker CLI + socket 来透传其他容器日志
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    group_add:
+      - "994"
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
       interval: 30s
@@ -132,6 +179,8 @@ services:
       dockerfile: Dockerfile
     container_name: hunter_etl_cron
     command: ["python", "-m", "etl.pipeline"]
+    env_file:
+      - ../backend/.env
     environment:
       DATABASE_URL: postgresql+asyncpg://hunter:hunter@postgres:5432/hunter_radar
       REDIS_URL: redis://redis:6379/0

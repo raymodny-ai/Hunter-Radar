@@ -17,7 +17,15 @@ Airflow 进程内不能直接 await asyncio.run()(会污染事件循环),这里�
 from __future__ import annotations
 
 import logging
+import sys
 from datetime import datetime, timedelta
+
+# 2026-07-23 patch: DAG 文件在 /opt/airflow/dags/,etl/ 是 sibling 目录。
+# Python sys.path 默认起点是 DAG 文件目录,加一行让 `from etl.xxx` 找得到。
+# 配合 docker-compose.yml 里 PYTHONPATH=/opt/airflow,这是 belt-and-suspenders。
+_ETL_PARENT = "/opt/airflow"
+if _ETL_PARENT not in sys.path:
+    sys.path.insert(0, _ETL_PARENT)
 
 from airflow.decorators import dag, task
 

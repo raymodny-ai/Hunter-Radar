@@ -12,15 +12,37 @@ from app.main import app
 import os
 
 # 加载 API Key 环境变量
-_SECRETS = Path(__file__).resolve().parents[4] / ".env.secrets"
-if _SECRETS.exists():
+# 2026-07-23 patch: 容器化后路径只有 3 级，parents[4] IndexError。
+# 改为按可用层数降级（3, 2, 1）推断仓库根。
+def _infer_repo_root_secrets() -> Path | None:
+    p = Path(__file__).resolve()
+    for depth in (3, 2, 1):
+        try:
+            candidate = p.parents[depth] / ".env.secrets"
+        except IndexError:
+            continue
+        return candidate
+    return None
+
+_SECRETS = _infer_repo_root_secrets()
+if _SECRETS and _SECRETS.exists():
     for line in _SECRETS.read_text().splitlines():
         line = line.strip()
         if line and not line.startswith("#") and "=" in line:
             k, _, v = line.partition("=")
             os.environ.setdefault(k.strip(), v.strip())
 
-FRONTEND_DIST = Path(__file__).resolve().parents[2] / "frontend" / "dist"
+# 优先读环境变量（容器化部署用，源文件不在 parents[2] 期望位置时设这个）
+_env_dist = os.environ.get("FRONTEND_DIST")
+if _env_dist:
+    FRONTEND_DIST = Path(_env_dist)
+else:
+    # 源码布局: ../../frontend/dist（parents[2]）。fallback 同样试一下
+    # parents[1]（仅为容器内的情况：app/ 在 /app/ 下，dist 也在 /app/frontend/dist/）
+    _resolved = Path(__file__).resolve()
+    FRONTEND_DIST = _resolved.parents[2] / "frontend" / "dist"
+    if not FRONTEND_DIST.is_dir() and (_resolved.parents[1] / "frontend" / "dist").is_dir():
+        FRONTEND_DIST = _resolved.parents[1] / "frontend" / "dist"
 
 
 def _setup_static() -> None:

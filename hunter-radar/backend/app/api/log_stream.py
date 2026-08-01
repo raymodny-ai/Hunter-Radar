@@ -20,10 +20,25 @@ router = APIRouter()
 # 与 control.sh 中 start_backend() 写出的位置一致:
 #   nohup ... -m app.static_serve > "$ROOT/server.log" 2>&1
 # 其中 ROOT = Hunter-Radar/ 目录(workspace/Hunter-Radar/server.log)
+def _infer_repo_root_log() -> Path | None:
+    """Pick the deepest reachable ancestor containing a server.log.
+
+    2026-07-22 patch: 容器化部署时 /app/app/api/log_stream.py 只有 3 级,
+    parents[4] 会抛 IndexError。改为按可用层数降级查找。
+    """
+    p = Path(__file__).resolve()
+    for depth in (3, 2, 1):
+        try:
+            return p.parents[depth] / "server.log"
+        except IndexError:
+            continue
+    return None
+
+
 _DEFAULT_LOG_PATHS = [
     Path(os.environ.get("HUNTER_RADAR_LOG", "")) if os.environ.get("HUNTER_RADAR_LOG") else None,
     Path("/vol1/@apphome/trim.openclaw/data/workspace/Hunter-Radar/server.log"),
-    Path(__file__).resolve().parents[4] / "server.log",  # backend/app/api → 4 级上溯到 Hunter-Radar/
+    _infer_repo_root_log(),
 ]
 _SERVER_LOG: Path | None = next(
     (p for p in _DEFAULT_LOG_PATHS if p and p.is_file()),
@@ -278,6 +293,52 @@ def _parse_kv(blob: str) -> dict[str, str]:
 
 def _log_event(msg: str) -> None:
     push_log("INFO", msg, source="sse")
+
+
+# ---- docker logs 透传 (FE-160 ext) ----
+@router.get("/logs/services")
+async def list_log_services() -> dict:
+    """返回可用的日志服务列表 (供前端下拉选择)。
+
+    包含所有 docker compose 服务 + 本地 server.log 文件。
+    """
+    from app.services.docker_logs import list_services
+
+    services = list_services()
+    services.append(
+        {
+            "service": "server-file",
+            "container": "",
+            "label": "server.log (本地文件, 持久化历史)",
+        }
+    )
+    return {"services": services, "total": len(services)}
+
+
+@router.get("/logs/docker")
+async def read_docker_logs(
+    container: str = Query(..., description="docker 容器名, e.g. hunter_backend"),
+    tail: int = Query(500, ge=1, le=5000),
+    since: str | None = Query(None, description="ISO 时间, e.g. 2026-07-23T06:00:00"),
+) -> dict:
+    """读指定 docker 容器的最近 N 行日志 (透传 docker CLI)。
+
+    容器名受白名单限制, 防止滥用。
+    """
+    from app.services.docker_logs import tail_container_logs
+
+    try:
+        entries = tail_container_logs(container, tail=tail, since=since)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+    except RuntimeError as e:
+        raise HTTPException(status_code=502, detail=str(e)) from e
+
+    return {
+        "container": container,
+        "returned": len(entries),
+        "entries": entries,
+    }
 
 
 def install_sse_logger() -> None:

@@ -39,6 +39,7 @@ import os
 from typing import Optional
 
 from fastapi import APIRouter, HTTPException, Query
+from pydantic import BaseModel
 
 from app.services.analytics import (
     EVENT_ALERT_RULE_CREATE,
@@ -194,6 +195,90 @@ async def list_event_names() -> dict:
     return {
         "event_names": list(ALL_EVENT_NAMES),
         "descriptions": descriptions,
+        "review_mode": SANDBOX_REVIEW_MODE,
+        "sandbox": True,
+    }
+
+
+# ----------------------------------------------------------------------
+# POST /events — 前端埋点上报入口 (FE-160 fix)
+# ----------------------------------------------------------------------
+# 2026-07-23 patch: 前端 usePerformanceProbe.ts 调 POST /analytics/events,
+# 但旧实现只有 GET (只读)。这是 V1.4.1 旧债。
+#
+# 接收 schema:
+#   { events: [{event_name, user_id?, properties?, event?, value?, meta?}] }
+# 兼容前端两种字段命名:
+#   event_name <-> event
+#   properties  <-> meta
+# user_id 缺省 → 用匿名 client_id (IP+UA hash)
+from typing import List, Optional
+
+from fastapi import Body, Request
+
+from app.services.analytics import track_event
+
+
+class _IngestEvent(BaseModel):
+    event_name: Optional[str] = None
+    user_id: Optional[str] = None
+    properties: Optional[dict] = None
+    # 兼容旧字段名
+    event: Optional[str] = None
+    value: Optional[float] = None
+    meta: Optional[dict] = None
+
+
+class _IngestBatch(BaseModel):
+    events: List[_IngestEvent]
+
+
+@router.post("/events", summary="上报埋点事件 (FE-160 fix)")
+async def ingest_events(request: Request, payload: _IngestBatch) -> dict:
+    """前端埋点批量上报入口。
+
+    接受兼容字段:event_name OR event, properties OR meta。
+    缺 user_id 时用 IP+UA hash 作为匿名 client_id。
+    """
+    from app.services.analytics import hash_user_id
+
+    # 匿名 fallback user_id: IP + UA hash
+    client_ip = request.client.host if request.client else "unknown"
+    ua = request.headers.get("user-agent", "")
+    anon_user = hash_user_id(f"{client_ip}|{ua}")[:24]
+
+    accepted = 0
+    rejected = []
+    for i, e in enumerate(payload.events):
+        # 字段归一化
+        name = e.event_name or e.event
+        props = dict(e.properties or e.meta or {})
+        if e.value is not None:
+            props["value"] = e.value
+        uid = e.user_id or anon_user
+
+        # 校验 event_name
+        if not name:
+            rejected.append({"index": i, "reason": "missing event_name"})
+            continue
+        if name not in ALL_EVENT_NAMES:
+            # 不在 10 类里的允许上报但标记 unknown
+            props["__unknown_event"] = True
+
+        try:
+            track_event(
+                event_name=name,
+                user_id=uid,
+                properties=props,
+            )
+            accepted += 1
+        except Exception as exc:
+            rejected.append({"index": i, "reason": str(exc)})
+
+    return {
+        "accepted": accepted,
+        "rejected": rejected,
+        "total": len(payload.events),
         "review_mode": SANDBOX_REVIEW_MODE,
         "sandbox": True,
     }

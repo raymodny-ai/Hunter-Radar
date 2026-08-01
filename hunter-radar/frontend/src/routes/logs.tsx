@@ -1,16 +1,18 @@
 /**
- * FE-160: 后台日志查看页面
+ * FE-160: 后台日志查看页面 (rev2, 2026-07-23)
  *
- * - 从 server.log 文件读取(进程重启后历史不丢)
- * - 实时 SSE 推送(structlog 日志流)
- * - 关键字 / 级别 / 来源过滤
- * - 暂停 / 继续 / 清空 / 下载
+ * 数据源 3 选 1:
+ *   - backend app 日志 (server.log 文件)
+ *   - docker 容器日志 (docker logs 透传, 7 个容器可选)
+ *   - SSE 实时流 (backend app structlog)
  *
  * 路由: /logs
- * 后端:
- *   GET  /api/v1/logs/file?tail=N&level=...&q=...&source=...
- *   GET  /api/v1/logs/stream   (SSE)
- *   GET  /api/v1/logs/history  (SSE 内存缓冲,作为实时补丁)
+ * 后端端点:
+ *   GET  /api/v1/logs/services            - 列出可选数据源
+ *   GET  /api/v1/logs/file?tail=N&...     - 读 server.log 文件
+ *   GET  /api/v1/logs/docker?container=.. - docker logs 透传
+ *   GET  /api/v1/logs/stream              - SSE
+ *   GET  /api/v1/logs/history?limit=N     - SSE 内存缓冲
  */
 import { useEffect, useMemo, useRef, useState, useCallback } from "react";
 import { createRoute } from "@tanstack/react-router";
@@ -21,9 +23,18 @@ interface LogEntry {
   level: string;
   msg: string;
   extra?: Record<string, unknown>;
-  source?: "app" | "uvicorn" | string;
+  source?: "app" | "uvicorn" | "docker" | string;
   raw?: string;
+  container?: string;
 }
+
+interface LogService {
+  service: string;
+  container: string;
+  label: string;
+}
+
+type SourceMode = "auto" | "docker" | "file";
 
 const LEVELS = ["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"] as const;
 
@@ -46,6 +57,7 @@ const LEVEL_BG: Record<string, string> = {
 const SOURCE_BADGE: Record<string, string> = {
   app: "bg-sky-900/40 text-sky-300 border-sky-800",
   uvicorn: "bg-slate-800 text-slate-400 border-slate-700",
+  docker: "bg-purple-900/40 text-purple-300 border-purple-800",
 };
 
 export const Route = createRoute({
@@ -55,53 +67,107 @@ export const Route = createRoute({
 });
 
 function LogsPage() {
-  // ---- 持久化历史(从 server.log 读) ----
+  // ---- 服务列表 ----
+  const [services, setServices] = useState<LogService[]>([]);
+  const [selectedService, setSelectedService] = useState<string>("backend");
+
+  // ---- 数据源模式 ----
+  // auto: 按 service 自动选 — backend 用 file (server.log), 其他用 docker
+  // docker/file: 强制用某个数据源
+  const [sourceMode, setSourceMode] = useState<SourceMode>("auto");
+
+  // ---- 历史 ----
   const [history, setHistory] = useState<LogEntry[]>([]);
   const [historyMeta, setHistoryMeta] = useState<{
     source: string;
     sizeBytes: number;
     loading: boolean;
     error: string | null;
-  }>({ source: "", sizeBytes: 0, loading: true, error: null });
+    returned: number;
+  }>({
+    source: "",
+    sizeBytes: 0,
+    loading: true,
+    error: null,
+    returned: 0,
+  });
 
-  // ---- 实时流(SSE)----
+  // ---- 实时 SSE ----
   const [live, setLive] = useState<LogEntry[]>([]);
   const [paused, setPaused] = useState(false);
   const [connected, setConnected] = useState(false);
   const liveBufferRef = useRef<LogEntry[]>([]);
+  const sseRef = useRef<EventSource | null>(null);
 
   // ---- 过滤 ----
   const [enabledLevels, setEnabledLevels] = useState<Set<string>>(
     new Set(LEVELS),
   );
   const [keyword, setKeyword] = useState("");
-  const [sourceFilter, setSourceFilter] = useState<"all" | "app" | "uvicorn">(
-    "all",
-  );
   const [autoScroll, setAutoScroll] = useState(true);
   const [tailSize, setTailSize] = useState(500);
+  const [showDockerSources, setShowDockerSources] = useState(true);
 
-  // ---- 视图:追加 / 替换 ----
+  // ---- 视图 ----
   const [appendLive, setAppendLive] = useState(true);
 
   const containerRef = useRef<HTMLDivElement>(null);
-  const sseRef = useRef<EventSource | null>(null);
+  const pausedRef = useRef(paused);
+  useEffect(() => {
+    pausedRef.current = paused;
+  }, [paused]);
+
+  // ---- 拉服务列表 ----
+  useEffect(() => {
+    fetch("/api/v1/logs/services")
+      .then((r) => (r.ok ? r.json() : Promise.reject(new Error(`HTTP ${r.status}`))))
+      .then((data) => {
+        const list: LogService[] = data.services ?? [];
+        setServices(list);
+      })
+      .catch((e) => {
+        setHistoryMeta((m) => ({ ...m, loading: false, error: `services: ${e}` }));
+      });
+  }, []);
+
+  // ---- 决定数据源 (auto 模式) ----
+  // V1.4 Docker 部署中: backend 的 server.log 不在镜像里生成 → auto 模式下
+  // 所有服务都走 docker (看各自容器的 stdout)。要看 structlog SSE 实时
+  // 流需要手动切到 "file" 模式 (但仅本地开发部署才能看到)。
+  const effectiveSource: "docker" | "file" = useMemo(() => {
+    if (sourceMode !== "auto") return sourceMode;
+    return "docker";
+  }, [sourceMode, selectedService]);
+
+  // ---- 决定 docker 容器名 ----
+  const dockerContainer = useMemo(() => {
+    const svc = services.find((s) => s.service === selectedService);
+    return svc?.container ?? "";
+  }, [services, selectedService]);
 
   // ---- 加载历史 ----
   const reloadHistory = useCallback(async () => {
     setHistoryMeta((m) => ({ ...m, loading: true, error: null }));
     try {
-      const r = await fetch(
-        `/api/v1/logs/file?tail=${tailSize}&source=${sourceFilter}`,
-      );
-      if (!r.ok) throw new Error(`HTTP ${r.status}`);
+      let url: string;
+      if (effectiveSource === "file") {
+        url = `/api/v1/logs/file?tail=${tailSize}`;
+      } else {
+        url = `/api/v1/logs/docker?container=${dockerContainer}&tail=${tailSize}`;
+      }
+      const r = await fetch(url);
+      if (!r.ok) {
+        const errText = await r.text();
+        throw new Error(`HTTP ${r.status}: ${errText.slice(0, 100)}`);
+      }
       const data = await r.json();
       setHistory(data.entries ?? []);
       setHistoryMeta({
-        source: data.source ?? "",
+        source: data.source ?? dockerContainer,
         sizeBytes: data.size_bytes ?? 0,
         loading: false,
         error: null,
+        returned: data.returned ?? (data.entries?.length ?? 0),
       });
     } catch (e) {
       setHistoryMeta((m) => ({
@@ -110,15 +176,23 @@ function LogsPage() {
         error: e instanceof Error ? e.message : String(e),
       }));
     }
-  }, [tailSize, sourceFilter]);
+  }, [effectiveSource, dockerContainer, tailSize]);
 
   useEffect(() => {
     void reloadHistory();
   }, [reloadHistory]);
 
-  // ---- SSE 实时流 ----
+  // ---- SSE 实时流 (只有 effectiveSource=file 时才有意义, docker 不推流) ----
   useEffect(() => {
-    if (paused) return;
+    if (paused || effectiveSource !== "file") {
+      // 清掉旧 sse
+      if (sseRef.current) {
+        sseRef.current.close();
+        sseRef.current = null;
+      }
+      setConnected(false);
+      return;
+    }
     const es = new EventSource("/api/v1/logs/stream");
     sseRef.current = es;
     es.onopen = () => setConnected(true);
@@ -127,7 +201,7 @@ function LogsPage() {
       try {
         const entry: LogEntry = JSON.parse(e.data);
         entry.source = entry.source ?? "app";
-        if (pausedRef.current) return; // pause 时丢弃,避免下次取消 pause 一口气灌进来
+        if (pausedRef.current) return;
         liveBufferRef.current.push(entry);
         if (liveBufferRef.current.length > 2000) {
           liveBufferRef.current = liveBufferRef.current.slice(-1000);
@@ -142,18 +216,11 @@ function LogsPage() {
       sseRef.current = null;
       setConnected(false);
     };
-  }, [paused]);
+  }, [paused, effectiveSource]);
 
-  // 用 ref 让 onmessage 里的 paused 判断拿到最新值
-  const pausedRef = useRef(paused);
-  useEffect(() => {
-    pausedRef.current = paused;
-  }, [paused]);
-
-  // ---- 合并:历史 + 实时 ----
+  // ---- 合并 ----
   const merged = useMemo(() => {
-    if (appendLive && live.length > 0) {
-      // 实时可能与历史尾部重叠,按 ts+raw 去重
+    if (appendLive && live.length > 0 && effectiveSource === "file") {
       const seen = new Set<string>();
       const out: LogEntry[] = [];
       for (const e of live) {
@@ -162,7 +229,6 @@ function LogsPage() {
         seen.add(k);
         out.push(e);
       }
-      // 历史里出现在实时 ts 之前的也带上
       const liveTs = live[0]?.ts ?? "";
       for (const e of history) {
         if (e.ts && liveTs && e.ts >= liveTs) continue;
@@ -175,23 +241,22 @@ function LogsPage() {
       return out;
     }
     return history;
-  }, [history, live, appendLive]);
+  }, [history, live, appendLive, effectiveSource]);
 
   // ---- 过滤 ----
   const filtered = useMemo(() => {
     const kw = keyword.trim().toLowerCase();
     return merged.filter((e) => {
       if (!enabledLevels.has(e.level)) return false;
-      if (sourceFilter !== "all" && e.source !== sourceFilter) return false;
+      if (effectiveSource === "docker" && !showDockerSources) return false;
       if (kw) {
         const hay = `${e.msg} ${e.raw ?? ""} ${JSON.stringify(e.extra ?? {})}`;
         if (!hay.toLowerCase().includes(kw)) return false;
       }
       return true;
     });
-  }, [merged, enabledLevels, keyword, sourceFilter]);
+  }, [merged, enabledLevels, keyword, effectiveSource, showDockerSources]);
 
-  // ---- 统计 ----
   const counts = useMemo(() => {
     const c: Record<string, number> = {};
     for (const e of filtered) c[e.level] = (c[e.level] || 0) + 1;
@@ -207,7 +272,6 @@ function LogsPage() {
     containerRef.current.scrollTop = containerRef.current.scrollHeight;
   }, [filtered, autoScroll]);
 
-  // ---- 操作 ----
   const toggleLevel = (lv: string) => {
     setEnabledLevels((prev) => {
       const next = new Set(prev);
@@ -226,14 +290,15 @@ function LogsPage() {
     const lines = filtered.map((e) => {
       const ts = e.ts || "-";
       const src = e.source || "?";
+      const ctr = e.container ? ` [${e.container}]` : "";
       const ex = e.extra ? " " + JSON.stringify(e.extra) : "";
-      return `${ts} [${e.level}] [${src}] ${e.msg}${ex}`;
+      return `${ts} [${e.level}] [${src}]${ctr} ${e.msg}${ex}`;
     });
     const blob = new Blob([lines.join("\n")], { type: "text/plain" });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = url;
-    a.download = `hunter-radar-logs-${new Date().toISOString().replace(/[:.]/g, "-")}.txt`;
+    a.download = `hunter-radar-${selectedService}-${new Date().toISOString().replace(/[:.]/g, "-")}.txt`;
     a.click();
     URL.revokeObjectURL(url);
   };
@@ -242,17 +307,46 @@ function LogsPage() {
     ? formatBytes(historyMeta.sizeBytes)
     : "—";
 
+  // ---- UI ----
   return (
     <div className="flex flex-col h-[calc(100vh-3rem)] bg-slate-950 text-slate-200">
-      {/* ── 顶部条 ──────────────────────────────────── */}
+      {/* 顶栏 */}
       <div className="flex flex-wrap items-center gap-2 px-3 py-2 bg-slate-900 border-b border-slate-800 text-xs">
         <div className="flex items-center gap-1.5 font-mono font-bold text-slate-300">
           <span>📋</span>
           <span>后台日志</span>
           <span className="text-slate-500 font-normal">
-            ({shown}/{total} filtered · {fileSizeText})
+            ({shown}/{total} · {fileSizeText})
           </span>
         </div>
+
+        <div className="w-px h-4 bg-slate-700" />
+
+        {/* 服务下拉 */}
+        <select
+          value={selectedService}
+          onChange={(e) => setSelectedService(e.target.value)}
+          className="bg-slate-800 border border-slate-700 rounded px-2 py-0.5 text-xs font-mono text-slate-200 min-w-[180px]"
+          title="选择日志来源服务"
+        >
+          {services.map((s) => (
+            <option key={s.service} value={s.service}>
+              {s.label}
+            </option>
+          ))}
+        </select>
+
+        {/* 数据源 */}
+        <select
+          value={sourceMode}
+          onChange={(e) => setSourceMode(e.target.value as SourceMode)}
+          className="bg-slate-800 border border-slate-700 rounded px-1.5 py-0.5 text-xs font-mono text-slate-200"
+          title="数据源: auto=Docker 部署默认走 docker logs；file=server.log (需本地部署)"
+        >
+          <option value="auto">auto ({effectiveSource})</option>
+          <option value="docker">docker logs</option>
+          <option value="file">server.log 文件</option>
+        </select>
 
         <div className="w-px h-4 bg-slate-700" />
 
@@ -281,34 +375,21 @@ function LogsPage() {
 
         <div className="w-px h-4 bg-slate-700" />
 
-        {/* 搜索框 */}
+        {/* 搜索 */}
         <input
           type="search"
           value={keyword}
           onChange={(e) => setKeyword(e.target.value)}
           placeholder="搜索 msg / raw / extra…"
-          className="bg-slate-800 border border-slate-700 rounded px-2 py-0.5 text-xs font-mono text-slate-200 placeholder:text-slate-500 w-64"
+          className="bg-slate-800 border border-slate-700 rounded px-2 py-0.5 text-xs font-mono text-slate-200 placeholder:text-slate-500 w-56"
         />
-
-        {/* 来源过滤 */}
-        <select
-          value={sourceFilter}
-          onChange={(e) =>
-            setSourceFilter(e.target.value as "all" | "app" | "uvicorn")
-          }
-          className="bg-slate-800 border border-slate-700 rounded px-1.5 py-0.5 text-xs font-mono text-slate-200"
-        >
-          <option value="all">all sources</option>
-          <option value="app">app only</option>
-          <option value="uvicorn">uvicorn only</option>
-        </select>
 
         {/* tail 大小 */}
         <select
           value={tailSize}
           onChange={(e) => setTailSize(Number(e.target.value))}
           className="bg-slate-800 border border-slate-700 rounded px-1.5 py-0.5 text-xs font-mono text-slate-200"
-          title="从文件加载的最后 N 行"
+          title="返回最后 N 行"
         >
           <option value={100}>100</option>
           <option value={500}>500</option>
@@ -318,35 +399,35 @@ function LogsPage() {
 
         <div className="flex-1" />
 
-        {/* 追加实时流开关 */}
-        <label
-          className="flex items-center gap-1 cursor-pointer select-none"
-          title="将 SSE 实时流追加到历史尾部"
-        >
-          <input
-            type="checkbox"
-            checked={appendLive}
-            onChange={() => setAppendLive((v) => !v)}
-            className="accent-sky-500"
-          />
-          追加实时
-        </label>
+        {/* 实时追加 — 仅 file 模式有效 */}
+        {effectiveSource === "file" && (
+          <label className="flex items-center gap-1 cursor-pointer select-none" title="将 SSE 实时流追加到历史尾部">
+            <input
+              type="checkbox"
+              checked={appendLive}
+              onChange={() => setAppendLive((v) => !v)}
+              className="accent-sky-500"
+            />
+            实时追加
+          </label>
+        )}
 
-        {/* 暂停 */}
-        <button
-          onClick={() => setPaused((v) => !v)}
-          className={[
-            "px-1.5 py-0.5 rounded font-mono border text-[10px]",
-            paused
-              ? "bg-amber-900/40 border-amber-700 text-amber-200"
-              : "bg-slate-800 border-slate-700 text-slate-300 hover:bg-slate-700",
-          ].join(" ")}
-          title="暂停时不再消费 SSE"
-        >
-          {paused ? "▶ 继续" : "⏸ 暂停"}
-        </button>
+        {/* 暂停 — 仅 file 模式有效 */}
+        {effectiveSource === "file" && (
+          <button
+            onClick={() => setPaused((v) => !v)}
+            className={[
+              "px-1.5 py-0.5 rounded font-mono border text-[10px]",
+              paused
+                ? "bg-amber-900/40 border-amber-700 text-amber-200"
+                : "bg-slate-800 border-slate-700 text-slate-300 hover:bg-slate-700",
+            ].join(" ")}
+            title="暂停 SSE"
+          >
+            {paused ? "▶ 继续" : "⏸ 暂停"}
+          </button>
+        )}
 
-        {/* 自动滚动 */}
         <label className="flex items-center gap-1 cursor-pointer select-none">
           <input
             type="checkbox"
@@ -357,25 +438,22 @@ function LogsPage() {
           滚动
         </label>
 
-        {/* 清空实时 */}
         <button
           onClick={clearLive}
           className="px-1.5 py-0.5 rounded font-mono border border-slate-700 bg-slate-800 text-slate-300 hover:bg-slate-700 text-[10px]"
-          title="清空实时缓冲(不影响历史)"
+          title="清空实时缓冲"
         >
           🗑 清实时
         </button>
 
-        {/* 重读文件 */}
         <button
           onClick={() => void reloadHistory()}
           className="px-1.5 py-0.5 rounded font-mono border border-slate-700 bg-slate-800 text-slate-300 hover:bg-slate-700 text-[10px]"
-          title="从 server.log 重新读取"
+          title="重新读取"
         >
           ↻ 重读
         </button>
 
-        {/* 下载 */}
         <button
           onClick={downloadLog}
           className="px-1.5 py-0.5 rounded font-mono border border-slate-700 bg-slate-800 text-slate-300 hover:bg-slate-700 text-[10px]"
@@ -385,7 +463,7 @@ function LogsPage() {
         </button>
       </div>
 
-      {/* ── 主日志流 ──────────────────────────────────── */}
+      {/* 主日志流 */}
       <div
         ref={containerRef}
         className="flex-1 overflow-y-auto font-mono text-[11px] leading-relaxed"
@@ -393,17 +471,25 @@ function LogsPage() {
       >
         {historyMeta.loading && (
           <div className="text-slate-500 text-center py-12">
-            读取 server.log…
+            读取 {effectiveSource === "docker" ? `docker logs ${dockerContainer}` : "server.log"}…
           </div>
         )}
         {historyMeta.error && (
           <div className="text-red-400 text-center py-12">
             ❌ 加载失败: {historyMeta.error}
+            <div className="text-xs text-slate-500 mt-2">
+              {effectiveSource === "file"
+                ? "提示: 当前为 backend server.log 模式，但 Docker 部署未挂载日志文件。"
+                : "提示: docker 透传需要 backend 容器挂载 /var/run/docker.sock。"}
+              {effectiveSource === "docker" && !dockerContainer && (
+                <>容器名为空 — 检查 /api/v1/logs/services 返回。</>
+              )}
+            </div>
           </div>
         )}
         {!historyMeta.loading && !historyMeta.error && shown === 0 && (
           <div className="text-slate-600 text-center py-12">
-            无匹配日志(历史 {history.length} 条,实时 {live.length} 条)
+            无匹配日志 (历史 {history.length} 条, 实时 {live.length} 条)
           </div>
         )}
         {filtered.map((e, i) => {
@@ -413,6 +499,7 @@ function LogsPage() {
           const bg = LEVEL_BG[e.level] || "";
           const src = e.source || "app";
           const srcCls = SOURCE_BADGE[src] || SOURCE_BADGE.app;
+          const ctr = e.container ? `·${e.container.replace("hunter_", "")}` : "";
           return (
             <div
               key={`${i}-${e.ts}-${(e.raw ?? e.msg).slice(0, 32)}`}
@@ -436,6 +523,11 @@ function LogsPage() {
               >
                 {src}
               </span>
+              {ctr && (
+                <span className="text-purple-400 shrink-0 text-[10px] font-bold" title={e.container}>
+                  {ctr}
+                </span>
+              )}
               <span className={`flex-1 break-all ${color}`}>{e.msg}</span>
               {e.extra && Object.keys(e.extra).length > 0 && (
                 <span className="text-slate-500 text-[10px] shrink-0 max-w-md truncate">
@@ -449,7 +541,7 @@ function LogsPage() {
         })}
       </div>
 
-      {/* ── 底部状态栏 ──────────────────────────────────── */}
+      {/* 底部状态栏 */}
       <div className="flex items-center gap-3 px-3 py-1 bg-slate-900 border-t border-slate-800 text-[10px] font-mono text-slate-500">
         <span
           className={`w-1.5 h-1.5 rounded-full ${
@@ -457,24 +549,36 @@ function LogsPage() {
               ? "bg-amber-500"
               : connected
                 ? "bg-emerald-500 animate-pulse"
-                : "bg-red-500"
+                : effectiveSource === "file"
+                  ? "bg-slate-500"
+                  : "bg-slate-600"
           }`}
         />
         <span>
-          SSE: {paused ? "paused" : connected ? "live" : "disconnected"}
+          {effectiveSource === "docker"
+            ? `docker logs (静态, 容器 ${dockerContainer})`
+            : paused
+              ? "paused"
+              : connected
+                ? "live"
+                : "file (offline)"}
         </span>
-        <span>·</span>
-        <span>file: {historyMeta.source || "—"}</span>
-        <span>·</span>
-        <span>shown {shown} / total {merged.length}</span>
         <span>·</span>
         <span>
-          history {history.length} · live {live.length}
+          source: {effectiveSource === "docker" ? `docker/${dockerContainer}` : historyMeta.source || "—"}
         </span>
+        <span>·</span>
+        <span>shown {shown}</span>
+        <span>·</span>
+        <span>history {history.length} · live {live.length}</span>
+        {effectiveSource === "docker" && (
+          <>
+            <span>·</span>
+            <span>returned {historyMeta.returned}</span>
+          </>
+        )}
         <div className="flex-1" />
-        <span className="text-slate-600">
-          FE-160 · /api/v1/logs/file + /api/v1/logs/stream
-        </span>
+        <span className="text-slate-600">FE-160 rev2 · /logs</span>
       </div>
     </div>
   );

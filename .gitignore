@@ -71,3 +71,7 @@ routeTree.gen.ts
 
 # Qoder IDE 缓存
 .qoder/
+
+# build artifact (vite build output copied into backend for Docker)
+frontend_dist/
+hunter-radar/backend/frontend_dist/

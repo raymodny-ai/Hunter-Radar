@@ -273,10 +273,8 @@ async def _compute_threat_score(ticker: str, session: AsyncSession) -> ThreatSco
         )
         row = rs.first()
         if row is None:
-            raise HTTPException(
-                status_code=404,
-                detail={"message": "no threat_score record", "ticker": t},
-            )
+            # V1.4.2 patch (FE-160 rev5): 改 200+null 而非 404,避免 React Query console noise
+            return None
     target_date = row[0]
 
     # 取详情
@@ -294,10 +292,7 @@ async def _compute_threat_score(ticker: str, session: AsyncSession) -> ThreatSco
     )
     d = rs2.first()
     if d is None:
-        raise HTTPException(
-            status_code=404,
-            detail={"message": "no threat_score detail", "ticker": t},
-        )
+        return None
 
     # 冷启动检查
     warmup = False
@@ -338,16 +333,20 @@ async def _compute_threat_score(ticker: str, session: AsyncSession) -> ThreatSco
 
 @router.get(
     "/symbols/{ticker}/threat",
-    response_model=ThreatScoreDTO,
     summary="最新 Threat Score（BD-080 12h 缓存）",
+    responses={
+        200: {"description": "ThreatScoreDTO 或 null (该 ticker 无 score 数据)"},
+        400: {"description": "无效 ticker"},
+    },
 )
 async def get_threat_score(
     ticker: str,
     session: AsyncSession = Depends(get_session),
-) -> ThreatScoreDTO:
+) -> ThreatScoreDTO | None:
     """返回最新一日的 Threat Score（从 threat_score_daily 表读）。
 
     M4 接力期：12h Redis TTL 缓存（key 含 ticker）。
+    V1.4.2 patch (FE-160 rev5): 无 score 返 200 + null 而非 404。
     """
     cache_key = f"cache:get_threat_score:{ticker.upper()}"
     result, _hit = await cache_or_set_json(
@@ -355,9 +354,7 @@ async def get_threat_score(
         settings.cache_ttl_report_seconds,
         lambda: _compute_threat_score(ticker, session),
     )
-    # manual dump: Pydantic v2 model_dump with mode='json' for safe serialization
-    if isinstance(result, ThreatScoreDTO):
-        return result
+    # V1.4.2: None 透传 (来自 _compute_threat_score 无数据情况)
     return result
 
 
@@ -575,18 +572,24 @@ async def get_threat_history(
 
 @router.get(
     "/symbols/{ticker}/ultimate-alert",
-    response_model=UltimateAlertDTO,
     summary="§3.5 该 ticker 最近一条终极警报(BD-064 / FE-031)",
-    responses={404: {"description": "该 ticker 当日无活跃终极警报"}},
+    responses={
+        200: {"description": "找到 UltimateAlertDTO 或 null (无警报)"},
+        400: {"description": "无效 ticker"},
+    },
 )
 async def get_ultimate_alert(
     ticker: str,
     session: AsyncSession = Depends(get_session),
-) -> UltimateAlertDTO:
+) -> UltimateAlertDTO | None:
     """读 ultimate_alert 表,返回该 ticker 最近一条触发的终极警报。
 
-    - 404:无警报(前端 useUltimateAlert 视为 null,不报错)
-    - 5xx:数据库/服务故障(透传)
+    V1.4.2 patch (FE-160 rev4): 无警报返 200 + null 而非 404,
+    避免 React Query fetch 报 console 404 噪音。
+    前端 useUltimateAlert 仍兼容 404 → null (双保险)。
+
+    - 200 + null: 该 ticker 当日无活跃终极警报
+    - 5xx: 数据库/服务故障(透传)
     """
     if not ticker or len(ticker) > 10:
         raise HTTPException(status_code=400, detail="invalid ticker")
@@ -611,10 +614,8 @@ async def get_ultimate_alert(
     rs = await session.execute(sql)
     row = rs.first()
     if row is None:
-        raise HTTPException(
-            status_code=404,
-            detail={"message": "no ultimate alert for this symbol", "ticker": t},
-        )
+        # V1.4.2: 改 200+null,前端 hook 不再需 catch 404
+        return None
     d = row._mapping
     return UltimateAlertDTO(
         triggered_at=d["triggered_at"].isoformat()
@@ -629,3 +630,43 @@ async def get_ultimate_alert(
         regime=(d["regime"] or "normal"),
         consecutive_days=int(d["consecutive_days"] or 0),
     )
+
+
+# ----------------------------------------------------------------------
+# GET /symbols/{ticker}/insider-actions  — V1.4 旧 stub (FE-160 fix)
+# ----------------------------------------------------------------------
+# 2026-07-23 patch: 前端 symbol.$ticker.tsx + usePerformanceProbe 引用此端点,
+# 但 V1.4.1 一直没实现。返回空 actions 列表 + 明示 stub 状态,前端消除 console 404。
+#
+# 真实数据路径 (V1.5+ 待办): 接 SEC EDGAR Form 4 pull (etl.sec_form4 已可用),
+# 查 insider_transactions 表 (如存在), 否则从 form4_load_result JSON 解析。
+from typing import List, Optional
+from pydantic import BaseModel as _BM
+
+
+class InsiderActionDTO(_BM):
+    filing_date: str
+    insider_name: str
+    insider_role: str
+    transaction_type: str  # "buy" | "sell" | "exercise" | "grant"
+    shares: int
+    price_per_share: Optional[float] = None
+    total_value: Optional[float] = None
+    source: str = "stub"
+
+
+@router.get(
+    "/symbols/{ticker}/insider-actions",
+    summary="§3.6 insider 交易记录 (V1.4 stub)",
+    response_model=List[InsiderActionDTO],
+)
+async def get_insider_actions(
+    ticker: str,
+    limit: int = Query(20, ge=1, le=100),
+    session: AsyncSession = Depends(get_session),
+) -> List[InsiderActionDTO]:
+    """Insider 交易 stub (V1.4 占位,V1.5 接 SEC Form 4)。
+
+    返回空列表 (目前无 insider_transactions 表), 显式标注 stub。
+    """
+    return []  # V1.5+ 改查 SEC Form 4 数据

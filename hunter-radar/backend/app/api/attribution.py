@@ -23,14 +23,19 @@ router = APIRouter()
 @router.get(
     "/symbols/{ticker}/attribution",
     summary="§3.6 信号归因分析(V1.6.0 瀑布图数据)",
+    responses={
+        200: {"description": "Attribution DTO 或 null (该 ticker 无 score 数据)"},
+        400: {"description": "无效 ticker"},
+    },
 )
 async def get_attribution(
     ticker: str,
     session: AsyncSession = Depends(get_session),
-) -> dict:
+) -> dict | None:
     """返回 Threat Score 的归因分析(各模块 weight × score 贡献)。
 
     用途:前端 Symbol Detail 展示"为什么是红灯"的瀑布图。
+    V1.4.2 patch (FE-160 rev5): 无 score 数据返 200 + null 而非 404,避免 React Query console noise。
     """
     if not ticker or len(ticker) > 10:
         raise HTTPException(status_code=400, detail="invalid ticker")
@@ -45,10 +50,8 @@ async def get_attribution(
     )
     row = rs.first()
     if row is None:
-        raise HTTPException(
-            status_code=404,
-            detail={"message": "no threat_score record", "ticker": t},
-        )
+        # V1.4.2: 改 200+null (无 score 数据)
+        return None
     target_date = row[0]
 
     # 取详情
@@ -65,10 +68,7 @@ async def get_attribution(
     )
     d = rs2.first()
     if d is None:
-        raise HTTPException(
-            status_code=404,
-            detail={"message": "no threat_score detail", "ticker": t},
-        )
+        return None
 
     # 解析 weights(可能是 JSON 字符串或 dict)
     weights_raw = d[6] or {}
@@ -95,4 +95,4 @@ async def get_attribution(
         total_raw=float(d[8] or 0),
     )
 
-    return result.to_dict()
+    return result.to_dict()  # None 透传给 FastAPI -> JSON null

@@ -42,6 +42,8 @@ dependencies = [
     "pytz>=2024.2",
     "orjson>=3.10.0",
     "python-multipart>=0.0.20",
+    # 2026-07-23 patch (FE-160 ext): docker SDK 走 /var/run/docker.sock 透传容器日志
+    "docker>=7.1.0",
 ]
 
 [project.optional-dependencies]
