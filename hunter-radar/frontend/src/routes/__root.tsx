@@ -21,8 +21,10 @@ import { LogPanel } from "@/components/common/LogPanel";
 import { Disclaimer } from "@/components/common/Disclaimer";
 import { GrayReleaseBanner } from "@/components/common/GrayReleaseBanner";
 import { PWAInstallBanner } from "@/components/common/PWAInstallBanner";
+import { OfflineBanner } from "@/components/common/OfflineBanner";
 import { QuotaBanner } from "@/components/common/QuotaBanner";
 import { RegimeBanner } from "@/components/radar/RegimeBanner";
+import { ToastViewport, AuthToastBridge } from "@/components/common/Toast";
 import { usePerformanceProbe } from "@/features/usePerformanceProbe";
 
 export const Route = createRootRoute({
@@ -45,6 +47,8 @@ function RootLayout() {
 
   const banners = (
     <div className="shrink-0">
+      {/* PRD §7.3: 离线横幅(最高优先) */}
+      <OfflineBanner />
       {/* FE-151: 8-K event marquee */}
       <EventTicker />
       <RegimeBanner />
@@ -70,6 +74,10 @@ function RootLayout() {
 
       {/* 移动端底部工具栏(FE-107) */}
       <MobileBottomToolbar />
+
+      {/* P1-05: 全局 Toast + Auth 事件桥接 */}
+      <ToastViewport />
+      <AuthToastBridge />
     </AppShell>
   );
 }

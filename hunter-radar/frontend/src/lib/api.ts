@@ -1,5 +1,7 @@
 /** 后端 API 客户端薄封装。所有调用走 /api 前缀(由 vite 代理到 :8000)。 */
 
+import { getAuthHeader, handleUnauthorized, checkRateLimit } from "./auth";
+
 const BASE = "/api/v1";
 
 export class ApiError extends Error {
@@ -10,11 +12,23 @@ export class ApiError extends Error {
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const r = await fetch(`${BASE}${path}`, {
-    headers: { "Content-Type": "application/json", ...(init?.headers ?? {}) },
+    headers: {
+      "Content-Type": "application/json",
+      ...getAuthHeader(),
+      ...(init?.headers ?? {}),
+    },
     credentials: "include",
     ...init,
   });
+
+  // PRD §5.1: rate limit 感知 — X-RateLimit-Remaining < 10% 时广播警告
+  checkRateLimit(r);
+
   if (!r.ok) {
+    // PRD §5.1: 401 全局拦截 → 清除 token + toast
+    if (r.status === 401) {
+      handleUnauthorized();
+    }
     // 先用 text() 再尝试 JSON.parse,避免 body stream already read
     const body = await r.text();
     let detail: unknown = null;
@@ -466,6 +480,58 @@ export const api = {
   adminGetBacktestResult: () =>
     request<{ results: unknown[] }>(`/admin/backtest/result`),
 
+  // ── P4-01: Admin Panel 扩展端点 (PRD §3.8) ─────────────
+
+  /** Feature flag 更新(灰度发布百分比) */
+  updateFeatureFlag: (flag: string, body: { enabled?: boolean; rollout_pct?: number }) =>
+    request<{ flag: string; enabled: boolean; rollout_pct: number }>(
+      `/admin/feature-flags/${encodeURIComponent(flag)}`,
+      { method: "PUT", body: JSON.stringify(body) },
+    ),
+
+  /** 用户列表(tier + quota) */
+  adminListUsers: () =>
+    request<
+      Array<{
+        id: string;
+        username: string;
+        tier: "free" | "pro";
+        quota_used: number;
+        quota_limit: number;
+        created_at: string;
+      }>
+    >(`/admin/users`),
+
+  /** 用户 tier / quota 手动覆盖 */
+  adminUpdateUser: (id: string, body: { tier?: "free" | "pro"; quota_limit?: number }) =>
+    request<{ id: string; tier: string; quota_limit: number }>(`/admin/users/${encodeURIComponent(id)}`, {
+      method: "PATCH",
+      body: JSON.stringify(body),
+    }),
+
+  /** 审计日志(actor + timestamp + diff) */
+  adminGetAuditLog: (params?: { q?: string; limit?: number }) =>
+    request<
+      Array<{
+        id: number;
+        actor: string;
+        action: string;
+        target: string;
+        diff: Record<string, unknown> | null;
+        created_at: string;
+      }>
+    >(
+      `/admin/audit-log?limit=${params?.limit ?? 100}${params?.q ? `&q=${encodeURIComponent(params.q)}` : ""}`,
+    ),
+
+  /** Analytics 归因汇总(事件仪表盘 + funnel) */
+  adminGetAnalyticsSummary: () =>
+    request<{
+      total_events: number;
+      events_by_type: Record<string, number>;
+      funnel: Array<{ stage: string; count: number }>;
+    }>(`/admin/analytics/summary`),
+
   // §6 Analytics 前端埋点上报
   reportAnalytics: (events: Array<{
     event: string;
@@ -476,6 +542,47 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ events }),
     }),
+
+  // ── P1-06: PRD §5.2 缺失端点补全 ─────────────────────
+
+  /** 全市场终极警报 feed (Dashboard 30s 轮询用, PRD §3.1) */
+  getUltimateAlertsFeed: (limit = 20) =>
+    request<{
+      trade_date: string;
+      alerts: Array<UltimateAlertDTO>;
+    }>(`/alerts/ultimate?limit=${limit}`),
+
+  /** LLM 摘要 (Symbol Detail 页用, PRD §3.2) */
+  getLlmSummary: (ticker: string) =>
+    request<{
+      symbol: string;
+      summary: string | null;
+      generated_at: string | null;
+      model: string | null;
+    }>(`/llm/summary?ticker=${encodeURIComponent(ticker)}`),
+
+  /** Auth login (PRD §5.2, sandbox stub) */
+  login: (body: { username: string; password: string }) =>
+    request<{ access_token: string; refresh_token?: string; token_type: string }>(
+      `/auth/login`,
+      { method: "POST", body: JSON.stringify(body) },
+    ),
+
+  /** P3-03: Stripe Checkout session (PRD §3.7, redirect flow) */
+  createCheckoutSession: (plan: "pro_monthly" | "pro_yearly") =>
+    request<{ checkout_url: string; session_id: string }>(`/billing/checkout`, {
+      method: "POST",
+      body: JSON.stringify({ plan }),
+    }),
+
+  /** P3-03: Current subscription state (PRD §3.7) */
+  getSubscription: () =>
+    request<{
+      tier: "free" | "pro";
+      plan: "pro_monthly" | "pro_yearly" | null;
+      status: "active" | "cancel_pending" | "expired" | "none";
+      current_period_end: string | null;
+    }>(`/billing/subscription`),
 };
 
 /** §3.5 终极警报 DTO（BD-064 / FE-031）—— 与后端 UltimateAlertDTO 字段保持一致。 */

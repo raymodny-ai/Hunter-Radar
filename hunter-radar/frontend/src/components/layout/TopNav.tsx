@@ -21,10 +21,11 @@ const STATUS_DOT: Record<string, string> = {
 };
 
 export function TopNav() {
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
   const status = useDataStatus();
   const [logVisible, setLogVisible] = useState(false);
-  const { setRightSidebarOpen, rightSidebarOpen } = useUIStore();
+  const { setRightSidebarOpen, rightSidebarOpen, language, setLanguage } =
+    useUIStore();
 
   const dot = STATUS_DOT[status.data?.status ?? "warming"] ?? STATUS_DOT.warming;
 
@@ -53,6 +54,20 @@ export function TopNav() {
 
       {/* ── 右侧:状态灯 + 工具按钮 ─────────────────── */}
       <div className="flex items-center gap-2 shrink-0">
+        {/* 语言切换 (PRD §1: zh-CN primary / en-US secondary) */}
+        <button
+          onClick={() => {
+            const next = language === "zh-CN" ? "en-US" : "zh-CN";
+            setLanguage(next);
+            void i18n.changeLanguage(next);
+          }}
+          className="text-xs px-2 py-1 rounded border bg-slate-800/50 border-slate-700 text-slate-400 hover:text-slate-200 font-mono"
+          aria-label={language === "zh-CN" ? "Switch to English" : "切换到中文"}
+          title={language === "zh-CN" ? "Switch to English" : "切换到中文"}
+        >
+          {language === "zh-CN" ? "EN" : "中"}
+        </button>
+
         {/* 数据状态灯 */}
         <div
           className="flex items-center gap-1.5"

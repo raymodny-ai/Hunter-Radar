@@ -7,6 +7,7 @@ import { Route as symbolRoute } from "./routes/symbol.$ticker";
 import { Route as alertsRoute } from "./routes/alerts";
 import { Route as basketRoute } from "./routes/basket";
 import { Route as regimeRoute } from "./routes/regime";
+import { Route as subscribeRoute } from "./routes/subscribe";
 import { Route as adminRoute } from "./routes/admin";
 import { Route as logsRoute } from "./routes/logs";
 import { createRouter } from "@tanstack/react-router";
@@ -19,6 +20,7 @@ const routeTree = rootRoute.addChildren([
   alertsRoute,
   basketRoute,
   regimeRoute,
+  subscribeRoute,
   adminRoute,
   logsRoute,
 ]);

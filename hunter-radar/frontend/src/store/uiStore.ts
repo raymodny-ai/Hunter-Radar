@@ -14,6 +14,9 @@ import { persist } from "zustand/middleware";
 
 export type SidebarTab = "watchlist" | "alerts" | "copilot";
 export type AnalyzerLayer = "options" | "short" | "divergence" | "insider";
+export type ChartPeriod = "30d" | "60d" | "90d" | "ytd";
+/** PRD §1: zh-CN primary, en-US secondary */
+export type Language = "zh-CN" | "en-US";
 
 export interface UIState {
   // ── 布局状态 ──────────────────────────────────
@@ -24,6 +27,13 @@ export interface UIState {
   // ── 图层状态 ──────────────────────────────────
   activeOverlays: Record<AnalyzerLayer, boolean>;
 
+  // ── PRD §6.2: 图表周期 + 主题 ─────────────────
+  chartPeriod: ChartPeriod;
+  theme: "dark";
+
+  // ── PRD §1: 本地化语言 ────────────────────────
+  language: Language;
+
   // ── Actions ───────────────────────────────────
   toggleLeftToolbar: () => void;
   setLeftToolbarCollapsed: (collapsed: boolean) => void;
@@ -31,6 +41,8 @@ export interface UIState {
   setRightSidebarOpen: (open: boolean) => void;
   toggleOverlay: (layer: AnalyzerLayer) => void;
   setOverlay: (layer: AnalyzerLayer, active: boolean) => void;
+  setChartPeriod: (period: ChartPeriod) => void;
+  setLanguage: (lang: Language) => void;
 }
 
 const DEFAULT_OVERLAYS: Record<AnalyzerLayer, boolean> = {
@@ -47,6 +59,9 @@ export const useUIStore = create<UIState>()(
       rightSidebarTab: "watchlist" as SidebarTab,
       rightSidebarOpen: false,
       activeOverlays: { ...DEFAULT_OVERLAYS },
+      chartPeriod: "90d" as ChartPeriod,
+      theme: "dark" as const,
+      language: "zh-CN" as Language,
 
       toggleLeftToolbar: () =>
         set((s) => ({ leftToolbarCollapsed: !s.leftToolbarCollapsed })),
@@ -72,6 +87,10 @@ export const useUIStore = create<UIState>()(
         set((s) => ({
           activeOverlays: { ...s.activeOverlays, [layer]: active },
         })),
+
+      setChartPeriod: (period) => set({ chartPeriod: period }),
+
+      setLanguage: (lang) => set({ language: lang }),
     }),
     {
       name: "hunter-ui-store",
@@ -79,6 +98,8 @@ export const useUIStore = create<UIState>()(
         leftToolbarCollapsed: state.leftToolbarCollapsed,
         rightSidebarTab: state.rightSidebarTab,
         activeOverlays: state.activeOverlays,
+        chartPeriod: state.chartPeriod,
+        language: state.language,
       }),
     },
   ),
