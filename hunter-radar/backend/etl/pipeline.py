@@ -440,8 +440,12 @@ async def run_daily_pipeline(
         else:
             res = await load_short_volume(rows)
             # 断裂点 2: 行数对账 — short_volume 静默丢失检测
+            # FINRA 日文件含全部 ~12000 市场 symbol, 但 HR 只维护 universe 子集,
+            # 非 universe 行记入 unknown_symbols 按设计跳过。因此 reconcile 的
+            # effective attempted = attempted - unknown_symbols(只对账应入库的 universe 行)
+            eff_attempted = res.attempted - res.unknown_symbols
             rc = _reconcile_loaded_rows(
-                res.attempted, res.inserted, res.failures, stage="load_short_volume"
+                eff_attempted, res.inserted, res.failures, stage="load_short_volume"
             )
             await mark_ready(
                 trade_date,
@@ -462,6 +466,7 @@ async def run_daily_pipeline(
                 inserted=res.inserted,
                 skipped=res.skipped,
                 failures=res.failures,
+                unknown=res.unknown_symbols,
                 reconcile=rc.ok,
                 excluded_symbols=sorted(bad_symbols) if bad_symbols else [],
             )
@@ -705,15 +710,17 @@ async def run_daily_pipeline(
             await session.commit()
 
             # 5.3 [4.3]: 物化视图刷新监控 — 验证是否落后
-            # 周末/节假日无行情, latest = 最近一个交易日, 允许最多落后 1 天自然日
+            # 参考基准 = 本次 pipeline 的 trade_date(而非 date.today(),后者是 NAS 本地
+            # CST 时区, 早晨会误报 stale)。周末/节假日 latest = 最近交易日 = trade_date 正常。
             from datetime import timedelta as _td
 
             latest = await session.scalar(
                 _t("SELECT MAX(trade_date) FROM mv_screener_top100")
             )
-            staleness_limit = date.today() - _td(days=1)
+            # 允许 MV 最多落后 trade_date 1 天(周末/节假日空窗)
+            staleness_limit = trade_date - _td(days=1)
             if _is_mv_stale(latest, staleness_limit):
-                msg = f"mv_screener_top100 落后: latest={latest} (限 {staleness_limit})"
+                msg = f"mv_screener_top100 落后: latest={latest} (本批 {trade_date} 限 {staleness_limit})"
                 log.error("mv.refresh.stale", message=msg)
                 report.add_error("refresh_mv_screener", msg)
                 report.stage("refresh_mv_screener", status="stale", latest=str(latest))
