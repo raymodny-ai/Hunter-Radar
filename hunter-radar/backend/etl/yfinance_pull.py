@@ -9,10 +9,37 @@ from datetime import date, datetime
 from typing import Literal
 
 import httpx
+from tenacity import (
+    retry,
+    retry_if_exception_type,
+    stop_after_attempt,
+    wait_exponential,
+)
 
 from app.core.config import settings
 
 log = logging.getLogger(__name__)
+
+# 3.3 (AQ-03): yfinance 外部调用重试 — 网络抖动/限流重试 2 次, 指数退避 5-30s
+_YF_ATTEMPTS = 2
+
+
+async def _yf_call(fn):
+    """重试包裹: 把同步 yfinance 调用放进线程池, 失败重试 (3.3 AQ-03)。"""
+    return await _yf_with_retry(fn)
+
+
+@retry(
+    retry=retry_if_exception_type(Exception),
+    stop=stop_after_attempt(_YF_ATTEMPTS),
+    wait=wait_exponential(multiplier=2, min=5, max=30),
+    reraise=True,
+)
+async def _yf_with_retry(fn):
+    """async 重试体: 每次 attempt 新建 to_thread 协程并 await (异常可触发重试)。"""
+    import asyncio
+
+    return await asyncio.to_thread(fn)
 
 
 @dataclass(slots=True)
@@ -72,12 +99,13 @@ async def fetch_daily_bars(symbol: str, start: date, end: date) -> list[DailyBar
 
     await _limiter.acquire()
     ticker = yf.Ticker(symbol)
-    # yfinance 同步 API 放进线程池执行
-    df = await asyncio.to_thread(
-        ticker.history,
-        start=start.isoformat(),
-        end=end.isoformat(),
-        auto_adjust=False,
+    # yfinance 同步 API 放进线程池执行 (失败自动重试 3.3)
+    df = await _yf_call(
+        lambda: ticker.history(
+            start=start.isoformat(),
+            end=end.isoformat(),
+            auto_adjust=False,
+        )
     )
     out: list[DailyBar] = []
     for ts, row in df.iterrows():
@@ -110,8 +138,8 @@ async def fetch_options_chain(symbol: str, max_dte: int | None = None) -> list[O
 
     await _limiter.acquire()
     ticker = yf.Ticker(symbol)
-    # yfinance 1.x: Ticker.options 是 property(tuple), 不是 method
-    expirations: list[str] = list(await asyncio.to_thread(lambda: ticker.options))
+    # yfinance 1.x: Ticker.options 是 property(tuple), 不是 method (失败重试 3.3)
+    expirations: list[str] = list(await _yf_call(lambda: ticker.options))
     today = date.today()
     # 前置过滤: 仅保留 DTE ≤ max_dte 的到期日 (None → 全部)
     if max_dte is not None:
@@ -125,7 +153,7 @@ async def fetch_options_chain(symbol: str, max_dte: int | None = None) -> list[O
     out: list[OptionContract] = []
     for exp in expirations:
         await _limiter.acquire()
-        chain = await asyncio.to_thread(ticker.option_chain, exp)
+        chain = await _yf_call(lambda e=exp: ticker.option_chain(e))
         for df, right in [(chain.calls, "C"), (chain.puts, "P")]:
             for _, row in df.iterrows():
                 out.append(

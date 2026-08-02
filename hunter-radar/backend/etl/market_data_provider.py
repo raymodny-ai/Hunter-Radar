@@ -18,7 +18,28 @@ from dataclasses import dataclass
 from datetime import date
 from typing import Literal
 
+from tenacity import (
+    retry,
+    retry_if_exception_type,
+    stop_after_attempt,
+    wait_exponential,
+)
+
 log = logging.getLogger(__name__)
+
+# 3.3 (AQ-03): yfinance 外部调用重试 — 网络抖动/限流重试 2 次, 指数退避 5-30s
+_YF_ATTEMPTS = 2
+
+
+@retry(
+    retry=retry_if_exception_type(Exception),
+    stop=stop_after_attempt(_YF_ATTEMPTS),
+    wait=wait_exponential(multiplier=2, min=5, max=30),
+    reraise=True,
+)
+async def _yf_retry_call(fn):
+    """async 重试体: 每次 attempt 新建 to_thread 协程并 await (异常可触发重试)。"""
+    return await asyncio.to_thread(fn)
 
 
 # ---- 数据契约(从 yfinance_pull 复用) ----
@@ -105,11 +126,12 @@ class YFinanceProvider(MarketDataProvider):
 
         await self._limiter.acquire()
         ticker = yf.Ticker(symbol)
-        df = await asyncio.to_thread(
-            ticker.history,
-            start=start.isoformat(),
-            end=end.isoformat(),
-            auto_adjust=False,
+        df = await _yf_retry_call(
+            lambda: ticker.history(
+                start=start.isoformat(),
+                end=end.isoformat(),
+                auto_adjust=False,
+            )
         )
         out: list[DailyBar] = []
         for ts, row in df.iterrows():
@@ -136,7 +158,7 @@ class YFinanceProvider(MarketDataProvider):
         await self._limiter.acquire()
         ticker = yf.Ticker(symbol)
         # yfinance Ticker.options 是 property(返回 tuple),不是 method
-        expirations: tuple[str, ...] = await asyncio.to_thread(lambda: ticker.options)
+        expirations: tuple[str, ...] = await _yf_retry_call(lambda: ticker.options)
         # 方案 3.2 (AQ-02): 前置 DTE 过滤
         if max_dte is not None:
             today = date.today()
@@ -150,7 +172,7 @@ class YFinanceProvider(MarketDataProvider):
         out: list[OptionContract] = []
         for exp in expirations:
             await self._limiter.acquire()
-            chain = await asyncio.to_thread(ticker.option_chain, exp)
+            chain = await _yf_retry_call(lambda e=exp: ticker.option_chain(e))
             for df, right in [(chain.calls, "C"), (chain.puts, "P")]:
                 for _, row in df.iterrows():
                     out.append(
@@ -458,7 +480,7 @@ async def fetch_options_recent(symbol: str, max_expirations: int = 3, max_dte_da
     import yfinance as yf
 
     t = yf.Ticker(symbol)
-    expirations = await asyncio.to_thread(lambda: t.options) or ()
+    expirations = await _yf_retry_call(lambda: t.options) or ()
     # 按 DTE 过滤 + 取前 max_expirations
     today = date.today()
     chosen: list[str] = []
