@@ -109,6 +109,12 @@ class Settings(BaseSettings):
         "divergence": 80.0,  # 量价背离百分位 × 100
         "insider": 65.0,   # press*0.6+cover*0.4
     }
+
+    # ---- 2.5 Z-Score / 窗口显式配置化 (方案 CA-03, CA-05) ----
+    options_pcr_z_window_days: int = 14   # PCR Z-Score 回溯窗口(交易日)
+    short_z_window_days: int = 60         # 做空比率 Z-Score 滚动窗口(交易日)
+    divergence_short_window: int = 10     # 背离检测短期滚动回归窗口(交易日)
+    divergence_long_window: int = 120     # 背离检测历史分位背景窗口(交易日)
     # OQ-02 EMA 平滑半衰期(交易日)
     ema_halflife_days: int = 2
 

@@ -131,8 +131,8 @@ async def compute_divergence(
     trade_date: date,
     *,
     symbols: list[str] | None = None,
-    lookback: int = 10,
-    history_lookback: int = 120,
+    lookback: int | None = None,
+    history_lookback: int | None = None,
     consecutive_days: int = 2,
     min_avg_volume_20d: float | None = None,
     session: AsyncSession | None = None,
@@ -142,14 +142,22 @@ async def compute_divergence(
     Args:
         trade_date: 计算当日
         symbols: 限定标的;None 时取全 universe(stock + etf)
-        lookback: 滚动回归窗口(默认 10)
-        history_lookback: 历史分位背景窗口(默认 120)
+        lookback: 短期滚动回归窗口(默认 config.divergence_short_window=10)
+        history_lookback: 历史分位背景窗口(默认 config.divergence_long_window=120)
         consecutive_days: 连续 ≥ N 日升级为 confirmed(默认 2)
         min_avg_volume_20d: 2.3 (CA-06) 20 日均量下限;None/<=0 时不过滤
 
     Returns:
         DivergenceLoadResult
     """
+    # 2.5 (CA-03): 窗口配置化 — None 时读 config.divergence_short/long_window
+    from app.core.config import get_settings as _get_settings
+
+    _s = _get_settings()
+    if lookback is None:
+        lookback = _s.divergence_short_window
+    if history_lookback is None:
+        history_lookback = _s.divergence_long_window
     result = DivergenceLoadResult()
     # 2.3: 默认启用流动性门禁; 显式传 0 关闭(不覆盖)
     if min_avg_volume_20d is None:

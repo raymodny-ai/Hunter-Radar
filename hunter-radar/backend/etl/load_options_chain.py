@@ -25,6 +25,7 @@ from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.config import get_settings
 from app.core.database import AsyncSessionLocal
 from app.models import Symbol  # 复用 metadata 引用 options_chain / option_anomaly
 from app.services.options_anomaly import (
@@ -667,7 +668,8 @@ async def compute_pcr_gamma(
             # V1.7.4: 拉过去 14 日 PCR 历史, 用于 pcr_z_score(V1.5.9 设计要求 cold-start 跳过此字段)
             # options_chain 里可直接 SUM(volume) 按 day 聚合
             pcr_history = await _read_pcr_history_for_symbol(
-                session, sym, trade_date, days=14
+                session, sym, trade_date,
+                days=get_settings().options_pcr_z_window_days,
             )
             pcr_result = compute_pcr(
                 put_vol,

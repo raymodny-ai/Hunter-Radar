@@ -275,7 +275,7 @@ async def compute_short_ratio(
     trade_date: date,
     *,
     symbols: list[str] | None = None,
-    lookback: int = 60,
+    lookback: int | None = None,
     history_lookback_days: int | None = None,
     session: AsyncSession | None = None,
 ) -> ShortRatioResult:
@@ -284,12 +284,17 @@ async def compute_short_ratio(
     Args:
         trade_date: 计算当日
         symbols: 限定标的;None 时取全 universe
-        lookback: Z-Score 滚动窗口(默认 60)
+        lookback: Z-Score 滚动窗口(None=默认 config.short_z_window_days=60)
         history_lookback_days: 读取历史窗口大小(默认 lookback * 1.6 自然日,1.6 系数预留周末/节假日)
 
     Returns:
         ShortRatioResult
     """
+    # 2.5 (CA-05): 窗口配置化 — None 时读 config.short_z_window_days
+    if lookback is None:
+        from app.core.config import get_settings
+
+        lookback = get_settings().short_z_window_days
     if history_lookback_days is None:
         history_lookback_days = int(lookback * 1.6) + 5
 
