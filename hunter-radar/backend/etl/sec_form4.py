@@ -33,6 +33,8 @@ from app.core.config import settings
 from app.core.database import AsyncSessionLocal
 from app.models import Symbol
 
+import etl.log_compat  # noqa: F401  # kwargs 日志垫片 (standalone/测试可用)
+
 log = logging.getLogger(__name__)
 
 
@@ -354,6 +356,17 @@ def _parse_form4_html(html: str) -> dict:
             re.search(r"10% Owner[^<]*</td>\s*<td[^>]*>\s*[Xx]\s*</td>", html, re.IGNORECASE)
         )
 
+    # ---- 3) 结构断言 (方案 3.5 AQ-08) ----
+    # 解析到了 reporting person 但三种角色全空 且 无任何交易 → 页面结构变更
+    # (Form 4 必然有 Director/10%% Owner/Officer 至少一个勾选 + 至少一个 txn)
+    any_role = out["is_director"] or out["is_ten_pct"] or out["is_officer"]
+    if out["reporting_person_name"] and not any_role and not out["first_txn_code"]:
+        log.error(
+            "form4.parse_structure_changed",
+            sample=str(out)[:200],
+        )
+        return {}
+
     return out
 
 
@@ -361,6 +374,9 @@ def _parse_form4_html(html: str) -> dict:
 
 
 _CIK_CACHE: dict[str, str] = {}
+_CIK_CACHE_TIME: float = 0.0
+# 方案 3.6 (AQ-09): CIK 索引 24h 缓存 (SEC 公司列表极少变动)
+_CIK_CACHE_TTL = 86400
 
 
 async def _load_cik_index(force: bool = False) -> dict[str, str]:
@@ -368,8 +384,13 @@ async def _load_cik_index(force: bool = False) -> dict[str, str]:
 
     返回:{ticker_upper: cik10_str}
     沙箱不可达时返回空 dict,不抛异常。
+    方案 3.6 (AQ-09): 内存缓存 24h, 过期自动刷新 (force=True 强制)。
     """
-    if _CIK_CACHE and not force:
+    import time as _time
+
+    global _CIK_CACHE_TIME
+
+    if _CIK_CACHE and not force and (_time.time() - _CIK_CACHE_TIME) < _CIK_CACHE_TTL:
         return _CIK_CACHE
     url = f"{settings.sec_edgar_base}/files/company_tickers.json"
     headers = {
@@ -393,7 +414,11 @@ async def _load_cik_index(force: bool = False) -> dict[str, str]:
         cik = v.get("cik_str")
         if ticker and cik is not None:
             mapping[ticker] = str(cik).zfill(10)
-    _CIK_CACHE.update(mapping)
+    if mapping:
+        import time as _time
+
+        _CIK_CACHE.update(mapping)
+        _CIK_CACHE_TIME = _time.time()
     log.info("sec.cik_index.loaded", size=len(mapping))
     return mapping
 
