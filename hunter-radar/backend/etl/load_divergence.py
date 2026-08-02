@@ -39,6 +39,12 @@ class DivergenceLoadResult(LoadResult):
     warmup: int = 0  # 数据不足走暖启动的 symbol 数
     rising: int = 0  # state='rising' 的 symbol 数
     confirmed: int = 0  # state='confirmed' 的 symbol 数
+    liquidity_skipped: int = 0  # 2.3 (CA-06) 低流动性被过滤的 symbol 数
+
+
+# 2.3 (CA-06): 20 日均量低于此值不参与背离检测(低流动性标的天然成交量
+# 百分位波动大,易误报)。
+MIN_AVG_VOLUME_20D: float = 100_000.0
 
 
 def _resolve_state(p_price: float, p_volume: float, is_divergent: bool) -> str:
@@ -128,6 +134,7 @@ async def compute_divergence(
     lookback: int = 10,
     history_lookback: int = 120,
     consecutive_days: int = 2,
+    min_avg_volume_20d: float | None = None,
     session: AsyncSession | None = None,
 ) -> DivergenceLoadResult:
     """计算 + 落库 divergence_window(BD-040/041/042)。
@@ -138,11 +145,15 @@ async def compute_divergence(
         lookback: 滚动回归窗口(默认 10)
         history_lookback: 历史分位背景窗口(默认 120)
         consecutive_days: 连续 ≥ N 日升级为 confirmed(默认 2)
+        min_avg_volume_20d: 2.3 (CA-06) 20 日均量下限;None/<=0 时不过滤
 
     Returns:
         DivergenceLoadResult
     """
     result = DivergenceLoadResult()
+    # 2.3: 默认启用流动性门禁; 显式传 0 关闭(不覆盖)
+    if min_avg_volume_20d is None:
+        min_avg_volume_20d = MIN_AVG_VOLUME_20D
 
     own_session = session is None
     if own_session:
@@ -177,6 +188,19 @@ async def compute_divergence(
             rows = pv.get(sym, [])
             closes = [c for _, c, _ in rows]
             volumes = [v for _, _, v in rows]
+
+            # 2.3 (CA-06): 低流动性过滤 — 20 日均量低于下限不参与背离检测
+            if min_avg_volume_20d > 0 and len(volumes) >= 5:
+                avg_vol = float(sum(volumes[-20:]) / len(volumes[-20:]))
+                if avg_vol < min_avg_volume_20d:
+                    log.debug(
+                        "divergence.skip_low_liquidity",
+                        symbol=sym, trade_date=str(trade_date),
+                        avg_vol_20d=round(avg_vol, 0), min=min_avg_volume_20d,
+                    )
+                    result.liquidity_skipped += 1
+                    continue
+
             v = detect_divergence(
                 closes,
                 volumes,
@@ -257,6 +281,7 @@ async def compute_divergence(
         inserted=result.inserted,
         rising=result.rising,
         confirmed=result.confirmed,
+        liquidity_skipped=result.liquidity_skipped,
         warmup=result.warmup,
     )
     return result
