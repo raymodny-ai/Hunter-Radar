@@ -346,6 +346,7 @@ async def run_daily_pipeline(
 
                 vr = validate_daily_price(bars)
                 if not vr.is_valid:
+                    # 断裂点 1: 验证失败必须阻止入库(此前只 mark_failed 仍继续 load)
                     log.warning(
                         "validation.daily_price.critical",
                         sym=seed["ticker"],
@@ -354,8 +355,10 @@ async def run_daily_pipeline(
                     await mark_failed(
                         trade_date,
                         "yfinance_eod",
-                        error=f"validation failed: {vr.outlier_count} outliers",
+                        error=f"validation failed: {vr.outlier_count} outliers ({seed['ticker']})",
                     )
+                    total["failures"] += vr.outlier_count
+                    continue
                 res = await _load_dp(bars)
                 total["attempted"] += res.attempted
                 total["inserted"] += res.inserted
