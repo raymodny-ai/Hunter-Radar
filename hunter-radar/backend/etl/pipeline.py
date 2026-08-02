@@ -232,6 +232,18 @@ async def _compute_historical_short_p99(
         return {}
 
 
+def _is_mv_stale(latest: date | None, staleness_limit: date) -> bool:
+    """5.3 [4.3]: 判断物化视图是否落后。
+
+    latest 为 mv_screener_top100 的 MAX(trade_date)。
+    - None(空表)或 < staleness_limit(今天-1天)→ stale
+    - 周末/节假日允许最新为最近交易日(=今天-1天)不报
+    """
+    if latest is None:
+        return True
+    return latest < staleness_limit
+
+
 @dataclass(slots=True)
 class PipelineReport:
     """单日 ETL 流水线执行报告。"""
@@ -691,7 +703,22 @@ async def run_daily_pipeline(
                 _t("REFRESH MATERIALIZED VIEW CONCURRENTLY mv_screener_top100")
             )
             await session.commit()
-            report.stage("refresh_mv_screener", status="ok")
+
+            # 5.3 [4.3]: 物化视图刷新监控 — 验证是否落后
+            # 周末/节假日无行情, latest = 最近一个交易日, 允许最多落后 1 天自然日
+            from datetime import timedelta as _td
+
+            latest = await session.scalar(
+                _t("SELECT MAX(trade_date) FROM mv_screener_top100")
+            )
+            staleness_limit = date.today() - _td(days=1)
+            if _is_mv_stale(latest, staleness_limit):
+                msg = f"mv_screener_top100 落后: latest={latest} (限 {staleness_limit})"
+                log.error("mv.refresh.stale", message=msg)
+                report.add_error("refresh_mv_screener", msg)
+                report.stage("refresh_mv_screener", status="stale", latest=str(latest))
+            else:
+                report.stage("refresh_mv_screener", status="ok", latest=str(latest))
     except Exception as e:  # noqa: BLE001
         # 物化视图不存在时忽略(首次部署未执行 migration)
         log.warning("refresh_mv_screener.skip", error=str(e))
