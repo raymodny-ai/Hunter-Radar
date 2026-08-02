@@ -1,6 +1,6 @@
 /** 后端 API 客户端薄封装。所有调用走 /api 前缀(由 vite 代理到 :8000)。 */
 
-import { getAuthHeader, handleUnauthorized, checkRateLimit } from "./auth";
+import { getAuthHeader, handleUnauthorized, checkRateLimit, handleQuotaExceeded } from "./auth";
 
 const BASE = "/api/v1";
 
@@ -28,6 +28,10 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
     // PRD §5.1: 401 全局拦截 → 清除 token + toast
     if (r.status === 401) {
       handleUnauthorized();
+    }
+    // 4.4 (NEW-02): 429 配额耗尽 → 广播 quota-exceeded (QuotaBanner 消费)
+    if (r.status === 429) {
+      handleQuotaExceeded();
     }
     // 先用 text() 再尝试 JSON.parse,避免 body stream already read
     const body = await r.text();

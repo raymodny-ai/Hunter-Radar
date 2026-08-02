@@ -59,7 +59,7 @@ export function getAuthHeader(): Record<string, string> {
 
 // ── Auth 事件总线 (401 / rate-limit) ────────────────────
 
-export type AuthEventType = "unauthorized" | "rate-limit-warning";
+export type AuthEventType = "unauthorized" | "rate-limit-warning" | "quota-exceeded";
 
 export interface AuthEvent {
   type: AuthEventType;
@@ -115,5 +115,16 @@ export function checkRateLimit(response: Response): void {
       message: `API 配额即将耗尽 (剩余 ${remainingNum}/${limitNum})`,
       remainingRatio: ratio,
     });
+  }
+}
+
+/** 4.4 (NEW-02): HTTP 429 配额耗尽 → 广播事件 + DOM 事件(QuotaBanner 消费)。 */
+export function handleQuotaExceeded(): void {
+  emitAuthEvent({ type: "quota-exceeded", message: "每日配额已用完" });
+  // 兼容方案 4.4 的 window event 语义
+  try {
+    window.dispatchEvent(new CustomEvent("quota-exceeded"));
+  } catch {
+    /* SSR/旧浏览器 | ignore */
   }
 }
