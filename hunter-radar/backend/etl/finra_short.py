@@ -69,6 +69,8 @@ def parse_finra_short_csv(content: bytes) -> list[ShortVolumeRow]:
     返回标准 ShortVolumeRow(short_volume=ShortVolume, non_short_volume=TotalVolume-ShortVolume)。
 
     V1.7.6+: 截断前检查精度损失,若 abs(float_val - int_val) > 0.5 则输出 warning。
+    方案 3.4 (AQ-05/AQ-06): int() → round() 四舍五入; 若 ShortVolume > TotalVolume 视为
+    逻辑错误, 记 error 并跳过该行 (不再静默 max(tv-sv,0) 硬钳)。
     """
     text = content.decode("utf-8", errors="replace")
     reader = csv.DictReader(io.StringIO(text), delimiter="|")
@@ -77,30 +79,40 @@ def parse_finra_short_csv(content: bytes) -> list[ShortVolumeRow]:
         try:
             d = date.fromisoformat(row["Date"])
             sym = row["Symbol"].strip().upper()
-            # V1.7.6+: 截断前精度损失检查
+            # 3.4: round() 四舍五入而非 int() 截断
             sv_float = float(row["ShortVolume"])
-            sv_int = int(sv_float)
+            sv_int = round(sv_float)
             if abs(sv_float - sv_int) > 0.5:
                 log.warning(
                     "finra.short.fractional_volume",
                     sym=sym,
                     date=str(d),
                     raw_value=sv_float,
-                    truncated=sv_int,
+                    rounded=sv_int,
                 )
             tv_float = float(row["TotalVolume"])
-            tv_int = int(tv_float)
+            tv_int = round(tv_float)
             if abs(tv_float - tv_int) > 0.5:
                 log.warning(
                     "finra.short.fractional_total_volume",
                     sym=sym,
                     date=str(d),
                     raw_value=tv_float,
-                    truncated=tv_int,
+                    rounded=tv_int,
                 )
             sv = sv_int
             tv = tv_int
-            nsv = max(tv - sv, 0)
+            # 3.4 (AQ-06): Short > Total 为逻辑错误, 跳过该行而非静默钳位
+            if sv > tv:
+                log.error(
+                    "finra.short.logic_error",
+                    sym=sym,
+                    date=str(d),
+                    short=sv,
+                    total=tv,
+                )
+                continue
+            nsv = tv - sv
         except (KeyError, ValueError, TypeError):
             continue
         if not sym or sv < 0 or nsv < 0:
