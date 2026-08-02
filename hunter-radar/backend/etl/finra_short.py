@@ -18,6 +18,8 @@ from tenacity import (
 
 from app.core.config import settings
 
+import etl.log_compat  # noqa: F401  # kwargs 日志垫片 (standalone/测试可用)
+
 log = logging.getLogger(__name__)
 
 # FINRA 公开报告文件命名(每日一份,中央时间 18:00 后公布)
@@ -107,10 +109,69 @@ def parse_finra_short_csv(content: bytes) -> list[ShortVolumeRow]:
     return out
 
 
+# FINRA 文件完整性校验 (方案 3.1 / 1.3 AQ-07)
+# 阈值: 美股活跃标的 ~11000, 保守下界 3000 (部分交易日可能更少)
+MIN_FINRA_ROWS = 3000
+SUSPICIOUS_SMALL_BYTES = 100_000
+
+
+def validate_finra_file(
+    content: bytes,
+    expected_date: date,
+    rows: list[ShortVolumeRow] | None = None,
+) -> tuple[bool, str]:
+    """校验 FINRA short sale volume 文件完整性。
+
+    方案 3.1 (AQ-07) / 1.3 (PL-02):
+      1. 最少行数检查 (活跃标的 ~11000, 下界 3000)
+      2. 日期一致性: 解析行中所有 Date 必须 == expected_date (防止混入多日数据)
+      3. Content-Length 合理性: <100KB 记 warning (不硬失败, 部分标的市场可能 legit 较小)
+
+    Returns:
+        (ok: bool, reason: str): ok=False 表示文件不完整应中止加载
+    """
+    text = content.decode("utf-8", errors="replace")
+    lines = text.strip().split("\n")
+
+    # 1. 最少行数 (含 header 行)
+    if len(lines) < MIN_FINRA_ROWS:
+        log.error(
+            "finra.file_too_short",
+            lines=len(lines),
+            min_required=MIN_FINRA_ROWS,
+        )
+        return False, f"file_too_short lines={len(lines)}<{MIN_FINRA_ROWS}"
+
+    # 3. 文件大小合理性 (warning 不硬失败)
+    if len(content) < SUSPICIOUS_SMALL_BYTES:
+        log.warning(
+            "finra.file_suspiciously_small",
+            bytes=len(content),
+            suspect_threshold=SUSPICIOUS_SMALL_BYTES,
+        )
+
+    # 2. 日期一致性: 若传入了已解析 rows, 校验所有行 Date == expected_date
+    if rows is not None and rows:
+        bad_dates = {str(r.trade_date) for r in rows if r.trade_date != expected_date}
+        if bad_dates:
+            log.error(
+                "finra.date_mismatch",
+                expected=str(expected_date),
+                got=sorted(bad_dates)[:5],
+            )
+            return False, f"date_mismatch got={sorted(bad_dates)[:3]}"
+
+    return True, "ok"
+
+
 async def run(trade_date: date) -> list[ShortVolumeRow]:
     """入口:下载并解析指定日期。"""
     log.info("finra.short.download.start", date=str(trade_date))
     content = await download_finra_short_daily(trade_date)
     rows = parse_finra_short_csv(content)
+    ok, reason = validate_finra_file(content, trade_date, rows)
+    if not ok:
+        # 文件不完整: 抛异常触发上层 abort (load_short_volume 门禁已处理坏行)
+        raise ValueError(f"finra file invalid: {reason}")
     log.info("finra.short.download.done", date=str(trade_date), rows=len(rows))
     return rows
