@@ -126,6 +126,63 @@ async def _load_with_gate(
     return await loader_fn(data)
 
 
+@dataclass(slots=True)
+class ReconcileResult:
+    """行数对账结果(断裂点 2)。"""
+
+    ok: bool
+    attempted: int
+    inserted: int
+    failures: int
+    loss_pct: float
+    message: str
+
+
+def _reconcile_loaded_rows(
+    attempted: int,
+    inserted: int,
+    failures: int,
+    *,
+    stage: str,
+    loss_tolerance_pct: float = 0.25,
+    min_probe_rows: int = 5,
+) -> ReconcileResult:
+    """断裂点 2: 行数对账 — 检测「部分数据静默加载」。
+
+    在 ETL 落库后核对 attempted(拉取行数) 与 inserted(实际入库)。
+    当拉取行足够多但入库量明显偏低(failures 占比高 / inserted 丢失>容差)时,
+    判定该 stage 存在静默数据丢失, 应标记 failed 而非无脑 ready。
+    """
+    if attempted <= 0:
+        return ReconcileResult(
+            ok=True, attempted=attempted, inserted=inserted, failures=failures,
+            loss_pct=0.0, message=f"{stage}: no rows to reconcile",
+        )
+    loss_pct = (attempted - inserted) / attempted * 100.0
+    # 静默丢失指 failures 占比高或 inserted 远低于 attempted
+    silent_loss = (
+        attempted >= min_probe_rows
+        and (failures / attempted) >= loss_tolerance_pct
+    ) or (
+        attempted >= min_probe_rows
+        and loss_pct >= loss_tolerance_pct * 100
+    )
+    if silent_loss:
+        return ReconcileResult(
+            ok=False, attempted=attempted, inserted=inserted, failures=failures,
+            loss_pct=loss_pct,
+            message=(
+                f"{stage}: reconcile FAIL attempted={attempted} inserted={inserted} "
+                f"failures={failures} loss={loss_pct:.1f}%"
+            ),
+        )
+    return ReconcileResult(
+        ok=True, attempted=attempted, inserted=inserted, failures=failures,
+        loss_pct=loss_pct,
+        message=f"{stage}: reconcile OK attempted={attempted} inserted={inserted} failures={failures}",
+    )
+
+
 async def _compute_historical_short_p99(
     trade_date: date,
     *,
@@ -304,12 +361,19 @@ async def run_daily_pipeline(
                 total["inserted"] += res.inserted
                 total["skipped"] += res.skipped
                 total["failures"] += res.failures
+            # 断裂点 2: 行数对账 — 检测 daily_price 静默丢失
+            rc = _reconcile_loaded_rows(
+                total["attempted"], total["inserted"], total["failures"], stage="load_daily_price"
+            )
             await mark_ready(
                 trade_date,
                 "yfinance_eod",
-                detail={"attempted": total["attempted"], "inserted": total["inserted"]},
+                detail={"attempted": total["attempted"], "inserted": total["inserted"], "reconcile": rc.ok},
             )
-            report.stage("load_daily_price", **total)
+            if not rc.ok:
+                log.warning("reconcile.daily_price", message=rc.message)
+                report.add_error("load_daily_price", rc.message)
+            report.stage("load_daily_price", **total, reconcile=rc.ok)
         except Exception as e:  # noqa: BLE001
             report.add_error("load_daily_price", str(e))
             await mark_failed(trade_date, "yfinance_eod", error=str(e))
@@ -344,12 +408,19 @@ async def run_daily_pipeline(
                     outliers=vr_short.outlier_count,
                 )
             res = await load_short_volume(rows)
+            # 断裂点 2: 行数对账 — short_volume 静默丢失检测
+            rc = _reconcile_loaded_rows(
+                res.attempted, res.inserted, res.failures, stage="load_short_volume"
+            )
             await mark_ready(
                 trade_date,
                 "finra",
-                detail={"attempted": res.attempted, "inserted": res.inserted},
+                detail={"attempted": res.attempted, "inserted": res.inserted, "reconcile": rc.ok},
             )
-            report.stage("load_short_volume", attempted=res.attempted, inserted=res.inserted, skipped=res.skipped, failures=res.failures)
+            if not rc.ok:
+                log.warning("reconcile.short_volume", message=rc.message)
+                report.add_error("load_short_volume", rc.message)
+            report.stage("load_short_volume", attempted=res.attempted, inserted=res.inserted, skipped=res.skipped, failures=res.failures, reconcile=rc.ok)
     except Exception as e:  # noqa: BLE001
         report.add_error("load_short_volume", str(e))
         await mark_failed(trade_date, "finra", error=str(e))
@@ -407,12 +478,19 @@ async def run_daily_pipeline(
                 total["inserted"] += res.inserted
                 total["skipped"] += res.skipped
                 total["failures"] += res.failures
+            # 断裂点 2: 行数对账 — options_chain 静默丢失检测
+            rc = _reconcile_loaded_rows(
+                total["attempted"], total["inserted"], total["failures"], stage="load_options_chain"
+            )
             await mark_ready(
                 trade_date,
                 "yfinance_options",
-                detail={"attempted": total["attempted"], "inserted": total["inserted"]},
+                detail={"attempted": total["attempted"], "inserted": total["inserted"], "reconcile": rc.ok},
             )
-            report.stage("load_options_chain", **total)
+            if not rc.ok:
+                log.warning("reconcile.options_chain", message=rc.message)
+                report.add_error("load_options_chain", rc.message)
+            report.stage("load_options_chain", **total, reconcile=rc.ok)
 
             # 末日 Put 异常合约
             ar = await compute_option_anomaly(trade_date)
@@ -465,12 +543,19 @@ async def run_daily_pipeline(
             form_rows = await sec_run_universe(trade_date)
             res_f4 = await load_form4(form_rows)
             res_bb = await load_buyback([])  # M2 接 8-K 解析后才有 BuybackEvent
+            # 断裂点 2: 行数对账 — form4 静默丢失检测
+            rc_f4 = _reconcile_loaded_rows(
+                res_f4.attempted, res_f4.inserted, res_f4.failures, stage="load_form4"
+            )
             await mark_ready(
                 trade_date,
                 "sec_form4",
-                detail={"attempted": res_f4.attempted, "inserted": res_f4.inserted},
+                detail={"attempted": res_f4.attempted, "inserted": res_f4.inserted, "reconcile": rc_f4.ok},
             )
-            report.stage("load_form4", attempted=res_f4.attempted, inserted=res_f4.inserted, skipped_etf=res_f4.skipped_etf)
+            if not rc_f4.ok:
+                log.warning("reconcile.form4", message=rc_f4.message)
+                report.add_error("load_form4", rc_f4.message)
+            report.stage("load_form4", attempted=res_f4.attempted, inserted=res_f4.inserted, skipped_etf=res_f4.skipped_etf, reconcile=rc_f4.ok)
             report.stage("load_buyback", attempted=res_bb.attempted, inserted=res_bb.inserted)
         except Exception as e:  # noqa: BLE001
             report.add_error("sec_form4_or_buyback", str(e))

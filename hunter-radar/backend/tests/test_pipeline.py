@@ -12,7 +12,12 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from etl.load_short_volume import LoadResult
-from etl.pipeline import PipelineReport, run_daily_pipeline
+from etl.pipeline import (
+    ReconcileResult,
+    _reconcile_loaded_rows,
+    PipelineReport,
+    run_daily_pipeline,
+)
 
 
 class TestPipelineReport:
@@ -35,6 +40,48 @@ class TestPipelineReport:
         assert "load_daily_price" in r.stages
         assert r.stages["load_daily_price"]["attempted"] == 10
         assert r.stages["load_short_volume"]["inserted"] == 5
+
+
+class TestReconcile:
+    """断裂点 2: 行数对账逻辑测试。"""
+
+    def test_no_rows_ok(self):
+        r = _reconcile_loaded_rows(0, 0, 0, stage="s")
+        assert r.ok is True
+
+    def test_full_load_ok(self):
+        # attempted=inserted, failures=0 → 正常
+        r = _reconcile_loaded_rows(100, 100, 0, stage="s")
+        assert r.ok is True
+        assert r.loss_pct == 0.0
+
+    def test_minor_loss_ok(self):
+        # 少量 skipped(UNIQUE 冲突)不触发
+        r = _reconcile_loaded_rows(100, 98, 2, stage="s")
+        assert r.ok is True
+
+    def test_high_failures_fail(self):
+        # failures 占比 >25% → 静默丢失
+        r = _reconcile_loaded_rows(100, 40, 60, stage="s")
+        assert r.ok is False
+        assert "reconcile FAIL" in r.message
+
+    def test_silent_loss_fail(self):
+        # inserted 远低于 attempted(无 failures, 但靠 loss%) → 静默丢失
+        r = _reconcile_loaded_rows(100, 50, 0, stage="s")
+        assert r.ok is False
+        assert r.loss_pct == 50.0
+
+    def test_small_probe_ignored(self):
+        # 行数太少不触发(避免噪声)
+        r = _reconcile_loaded_rows(4, 1, 3, stage="s")
+        assert r.ok is True
+
+    def test_failures_attribute_compat(self):
+        # Form4LoadResult/LoadResult 均含 failures 字段, 对账可用
+        lr = LoadResult(attempted=10, inserted=10, skipped=0, failures=0)
+        r = _reconcile_loaded_rows(lr.attempted, lr.inserted, lr.failures, stage="s")
+        assert r.ok is True
 
 
 def _ok_load_result(**kw) -> LoadResult:
