@@ -325,6 +325,7 @@
     "noData": "Threat Score not yet generated (data accumulating).",
     "noDataHint": "Full data requires the EOD pipeline to complete Threat Score computation for at least 30 trading days.",
     "moduleSignals": "Module Signal Lights",
+    "moduleBreakdown": "Module Breakdown",
     "signalRadar": "4-Dimension Signal Radar",
     "attribution": "Threat Score Attribution",
     "trajectory90d": "90-Day Trajectory",

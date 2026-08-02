@@ -53,6 +53,7 @@ class ExplainThreatScoreDTO(ThreatScoreDTO):
 
     primary_driver: str | None  # 权重×分 贡献最大的模块
     module_scores: dict[str, float]
+    module_quality: dict[str, str]  # 4.3: 每模块质量标记 complete|degraded|missing
     confidence: Literal["high", "medium", "insufficient_data"]
     active_modules: int
     ema_note: str
@@ -72,11 +73,16 @@ def _explain_for_score(
     - 有效模块(分>0) < MIN_ACTIVE_MODULES(=2) → insufficient_data
     - 否则: 4 模块有效=high / <4=medium
 
+    dto: 可以是 ThreatScoreDTO 实例, 或 cache_or_set_json 命中后反序列化的 dict。
     persisted: _read_persisted_explain 返回的评分分解列(module_scores_json /
     module_quality / confidence / active_modules); 4.1 后 load 已落库,
     优先采用持久化值, 避免现算与当时打分不一致。
     """
     from app.services.threat_score import MIN_ACTIVE_MODULES
+
+    # cache 命中时 value 是 dict (不是 DTO) — 归一化为 ThreatScoreDTO
+    if isinstance(dto, dict):
+        dto = ThreatScoreDTO(**dto)
 
     scores = {
         "options": dto.module_options,
@@ -107,6 +113,16 @@ def _explain_for_score(
     if pers_scores:
         scores = {k: float(v) for k, v in pers_scores.items()}
 
+    # 4.3: module_quality 每模块质量标记(优先持久化,否则按 active 推导)
+    pers_quality = (persisted or {}).get("module_quality")
+    if pers_quality:
+        module_quality = dict(pers_quality)
+    else:
+        dq = getattr(dto, "data_quality", "complete") or "complete"
+        module_quality = {
+            k: (dq if k in active else "missing") for k in scores
+        }
+
     # EMA / 尖峰 / regime 说明
     panic_thr = float(settings_obj.threat_red_threshold_panic)
     spike_override = dto.total_raw >= panic_thr
@@ -123,6 +139,7 @@ def _explain_for_score(
         **dto.model_dump(),
         primary_driver=primary,
         module_scores=scores,
+        module_quality=module_quality,
         confidence=confidence,  # type: ignore[arg-type]
         active_modules=active_count or 0,
         ema_note=ema_note,

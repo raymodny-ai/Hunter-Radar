@@ -325,6 +325,7 @@
     "noData": "的 Threat Score 暂未生成(数据积累中)。",
     "noDataHint": "完整数据需要 EOD 流水线对至少 30 个交易日完成 Threat Score 计算后展示。",
     "moduleSignals": "模块信号灯",
+    "moduleBreakdown": "模块贡献",
     "signalRadar": "四维信号雷达",
     "attribution": "威胁分溯源",
     "trajectory90d": "90 日轨迹",

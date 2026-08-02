@@ -5,6 +5,7 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { api, ApiError } from "@/lib/api";
 import { ThreatScoreGauge } from "@/components/radar/ThreatScoreGauge";
 import { ModuleSignalLight } from "@/components/radar/ModuleSignalLight";
+import { ModuleBreakdown } from "@/components/radar/ModuleBreakdown";
 import { SignalLifecycleBadge } from "@/components/radar/SignalLifecycleBadge";
 import {
   UltimateAlertOverlay,
@@ -36,6 +37,14 @@ import "react-resizable/css/styles.css";
 export const Route = createLazyRoute("/symbol/$ticker")({
   component: SymbolPage,
 });
+
+// 4.3: 模块中文标签 (主驱动显示用)
+const MODULE_LABELS: Record<string, string> = {
+  options: "期权异常",
+  short: "做空压力",
+  divergence: "量价背离",
+  insider: "内部人交易",
+};
 
 // ── P1-03: Period toggle 映射 (PRD §3.2) ─────────────
 const PERIOD_DAYS: Record<ChartPeriod, number> = {
@@ -114,6 +123,14 @@ function SymbolPage() {
     queryKey: ["threat", ticker],
     queryFn: () => notFoundToNull(api.getThreatScore(ticker)),
     retry: 0,
+  });
+
+  // 4.3: 评分解释 — 模块分解 + 质量标记 (explain=true)
+  const explain = useQuery({
+    queryKey: ["threat-explain", ticker],
+    queryFn: () => notFoundToNull(api.getThreatScoreExplain(ticker)),
+    retry: 0,
+    staleTime: 1000 * 60 * 60,
   });
 
   // M2: Attribution 瀑布图数据
@@ -344,6 +361,39 @@ function SymbolPage() {
             <ModuleSignalLight name={t("modules.divergence")} value={d.module_divergence} />
             <ModuleSignalLight name={t("modules.insider")} value={d.module_insider} />
           </div>
+          {/* 4.3: 模块贡献分解 + 质量标记 (explain 数据,不可用时回落到基础分+权重) */}
+          {explain.data && (() => {
+            const exp = explain.data;
+            return (
+              <div className="mt-4 border-t border-slate-800 pt-3">
+                <h3 className="text-[11px] font-medium text-slate-400 mb-2">
+                  {t("symbol.moduleBreakdown")}
+                  {exp.primary_driver && (
+                    <span className="ml-2 text-[10px] text-cyan-300">
+                      主驱动 · {MODULE_LABELS[exp.primary_driver] ?? exp.primary_driver}
+                    </span>
+                  )}
+                </h3>
+                <ModuleBreakdown
+                  modules={Object.fromEntries(
+                    Object.entries(exp.weights ?? {}).map(([m, w]) => [
+                      m,
+                      {
+                        score: exp.module_scores?.[m] ?? null,
+                        weight: w,
+                        quality: exp.module_quality?.[m],
+                      },
+                    ]),
+                  )}
+                />
+                <div className="mt-2 flex items-center gap-2 text-[10px] text-slate-500">
+                  <span>置信度 {exp.confidence}</span>
+                  <span>·</span>
+                  <span>活动模块 {exp.active_modules}</span>
+                </div>
+              </div>
+            );
+          })()}
           <div className="mt-3 text-[10px] text-slate-600">
             EMA {t("symbol.emaHalflife")} {d.ema_halflife} · {t("symbol.weights")} {JSON.stringify(d.weights)} · {d.signal_lifecycle}
           </div>

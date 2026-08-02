@@ -89,6 +89,36 @@ export const api = {
       data_quality: "complete" | "degraded" | "stale";
     }>(`/symbols/${ticker}/threat`),
 
+  // 4.3: 评分解释 (含模块分解 + 质量标记)。相比 getThreatScore 多返回:
+  // module_scores / module_quality / confidence / active_modules / primary_driver
+  getThreatScoreExplain: (ticker: string) =>
+    request<{
+      trade_date: string;
+      symbol: string;
+      symbol_type: "stock" | "etf";
+      total: number;
+      total_raw: number;
+      ema_halflife: number;
+      module_options: number;
+      module_short: number;
+      module_divergence: number;
+      module_insider: number;
+      weights: Record<string, number>;
+      signal_lifecycle: "init" | "red" | "yellow" | "gray" | "green";
+      regime: "normal" | "panic";
+      nl_summary: string | null;
+      data_warmup: boolean;
+      data_quality: "complete" | "degraded" | "stale";
+      primary_driver: string | null;
+      module_scores: Record<string, number>;
+      module_quality: Record<string, string>;
+      confidence: "high" | "medium" | "insufficient_data";
+      active_modules: number;
+      ema_note: string;
+      spike_override: boolean;
+      regime_note: string | null;
+    }>(`/symbols/${ticker}/threat?explain=true`),
+
   getThreatHistory: (ticker: string, days = 90) =>
     request<Array<{ date: string; total: number; total_raw: number; signal_lifecycle?: string }>>(
       `/symbols/${ticker}/threat-history?days=${days}`,
