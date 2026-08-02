@@ -45,6 +45,9 @@ from app.services.options_anomaly import (
 from etl.load_short_volume import LoadResult
 from etl.yfinance_pull import OptionContract
 
+# 触发 stdlib↔structlog kwargs 兼容垫片(单独调用本模块也生效, 不依赖 pipeline 入口)
+import etl.log_compat  # noqa: F401  (副作用: 安装 Logger kwargs 垫片)
+
 log = logging.getLogger(__name__)
 
 
