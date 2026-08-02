@@ -13,6 +13,11 @@ from collections.abc import Sequence
 from decimal import Decimal
 from math import log, log1p, tanh
 
+# CA-11 (优化方案 2.1): 单模块独占权重保护。
+# 至少 2 个模块有真实数据才出分, 否则返回 confidence="insufficient_data"。
+# 防止 3/4 模块缺失时剩余 1 个模块独占 100% 权重放大噪声。
+MIN_ACTIVE_MODULES = 2
+
 
 def ema_smooth(history: Sequence[float], halflife_days: int = 2) -> list[float]:
     """指数移动平均(EMA),半衰期 = halflife_days 个交易日。
@@ -132,6 +137,21 @@ def compute_threat_score(
             "ema_series": [0.0],
             "modules_active": [],
             "data_quality": "stale",
+            "confidence": "insufficient_data",
+            "active_modules": 0,
+        }
+
+    if len(active) < MIN_ACTIVE_MODULES:
+        # CA-11: 仅 1 个模块有数据 → 不出分(避免单模块独占 100% 权重)
+        return {
+            "raw": None,
+            "ema": None,
+            "ema_series": [],
+            "modules_active": sorted(active.keys()),
+            "data_quality": "insufficient",
+            "confidence": "insufficient_data",
+            "active_modules": len(active),
+            "note": f"仅 {len(active)}/{len(modules)} 模块有数据,不出分(CA-11)",
         }
 
     # 重新归一化权重(排除 None 模块后总和可能 < 1.0)
@@ -173,6 +193,8 @@ def compute_threat_score(
         "ema_series": [round(min(x, 100.0), 2) for x in ema_series],
         "modules_active": sorted(active.keys()),
         "data_quality": data_quality,
+        "confidence": "high" if len(active) == len(modules) else "medium",
+        "active_modules": len(active),
     }
 
 

@@ -504,6 +504,16 @@ async def compute_threat_scores(
             raw = score["raw"]
             ema = score["ema"]
 
+            # CA-11 (方案 2.1): 模块不足(insufficient_data)时不出分, 跳过该 symbol
+            if raw is None or ema is None:
+                log.warning(
+                    "threat_score.insufficient_data",
+                    sym=sym, trade_date=str(trade_date),
+                    active_modules=score.get("active_modules"),
+                    note=score.get("note"),
+                )
+                continue
+
             # 5 态(red 阈值 M2 默认 70;M3 接 regime 后调整为 80)
             red_thr = settings.threat_red_threshold
             panic_thr = settings.threat_red_threshold_panic

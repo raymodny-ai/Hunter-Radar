@@ -69,6 +69,13 @@ class ValidationResult:
         status = "PASS" if self.is_valid else "FAIL"
         return f"[{status}] checked={self.checked_count} outliers={self.outlier_count} warnings={len(self.warnings)}"
 
+    def bad_symbols(self) -> set[str]:
+        """返回所有 critical 警告涉及的 symbol 集合(应剔除的行)。
+
+        Owner 决策(2026-08-02): 不做整批 abort, 剔除坏行 + 标记, 好行照常入库。
+        """
+        return {w.symbol for w in self.warnings if w.severity == "critical"}
+
 
 # ---- 1) 日 K 线校验 ----
 

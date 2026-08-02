@@ -35,7 +35,7 @@ from etl.load_etf_proxy import compute_etf_proxy
 from etl.load_form4 import load_buyback, load_form4
 from etl.load_options_chain import compute_option_anomaly, load_options_chain
 from etl.load_short_volume import load_short_volume
-from etl.refresh_data_status import mark_failed, mark_ready
+from etl.refresh_data_status import mark_failed, mark_pending, mark_ready
 from etl.retry_policy import etl_retry_async, run_stage_with_retry
 from etl.validation import (
     ValidationResult,
@@ -389,27 +389,43 @@ async def run_daily_pipeline(
         # 传入 historical_p99 使统计离群检测生效
         historical_p99 = await _compute_historical_short_p99(trade_date)
         vr_short = validate_short_volume(rows, historical_p99=historical_p99 or None)
-        if not vr_short.is_valid:
+        if vr_short.warnings:
+            log.warning(
+                "validation.short_volume.warnings",
+                trade_date=str(trade_date),
+                outliers=vr_short.outlier_count,
+                critical=sum(1 for w in vr_short.warnings if w.severity == "critical"),
+            )
+
+        # Owner 决策(2026-08-02): 不做整批 abort(critical 不再跳过整批)。
+        # 改为: 剔除 critical 行(标记暂缓), 好行照常入库。
+        # 统计离群(warning)行保留入库。
+        bad_symbols = vr_short.bad_symbols()
+        if bad_symbols:
             log.error(
-                "validation.short_volume.critical.skip_batch",
+                "validation.short_volume.exclude_bad_rows",
                 trade_date=str(trade_date),
                 checked=vr_short.checked_count,
-                outliers=vr_short.outlier_count,
+                excluded_symbols=sorted(bad_symbols),
+                n_excluded=len(bad_symbols),
                 summary=vr_short.summary(),
             )
-            await mark_failed(
-                trade_date,
-                "finra",
-                error=f"validation critical: {vr_short.summary()}",
-            )
-            report.stage("load_short_volume", status="skipped_by_validation", summary=vr_short.summary())
+            good_rows = [r for r in rows if r.symbol not in bad_symbols]
+            for sym in bad_symbols:
+                try:
+                    await mark_pending(
+                        trade_date,
+                        "finra",
+                        symbol=sym,
+                        reason=f"validation critical: {vr_short.summary()}",
+                    )
+                except Exception:  # noqa: BLE001
+                    pass
+            rows = good_rows
+
+        if not rows:
+            log.warning("load_short_volume.empty_after_exclusion", trade_date=str(trade_date))
         else:
-            if vr_short.warnings:
-                log.warning(
-                    "validation.short_volume.warnings",
-                    trade_date=str(trade_date),
-                    outliers=vr_short.outlier_count,
-                )
             res = await load_short_volume(rows)
             # 断裂点 2: 行数对账 — short_volume 静默丢失检测
             rc = _reconcile_loaded_rows(
@@ -418,12 +434,25 @@ async def run_daily_pipeline(
             await mark_ready(
                 trade_date,
                 "finra",
-                detail={"attempted": res.attempted, "inserted": res.inserted, "reconcile": rc.ok},
+                detail={
+                    "attempted": res.attempted,
+                    "inserted": res.inserted,
+                    "excluded_symbols": sorted(bad_symbols) if bad_symbols else [],
+                    "reconcile": rc.ok,
+                },
             )
             if not rc.ok:
                 log.warning("reconcile.short_volume", message=rc.message)
                 report.add_error("load_short_volume", rc.message)
-            report.stage("load_short_volume", attempted=res.attempted, inserted=res.inserted, skipped=res.skipped, failures=res.failures, reconcile=rc.ok)
+            report.stage(
+                "load_short_volume",
+                attempted=res.attempted,
+                inserted=res.inserted,
+                skipped=res.skipped,
+                failures=res.failures,
+                reconcile=rc.ok,
+                excluded_symbols=sorted(bad_symbols) if bad_symbols else [],
+            )
     except Exception as e:  # noqa: BLE001
         report.add_error("load_short_volume", str(e))
         await mark_failed(trade_date, "finra", error=str(e))
