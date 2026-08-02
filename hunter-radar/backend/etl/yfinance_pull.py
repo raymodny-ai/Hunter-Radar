@@ -97,8 +97,12 @@ async def fetch_daily_bars(symbol: str, start: date, end: date) -> list[DailyBar
     return out
 
 
-async def fetch_options_chain(symbol: str) -> list[OptionContract]:
-    """拉取所有未到期合约的 Volume / OI / 行权价 / 到期日。
+async def fetch_options_chain(symbol: str, max_dte: int | None = None) -> list[OptionContract]:
+    """拉取未到期合约的 Volume / OI / 行权价 / 到期日。
+
+    方案 3.2 (AQ-02): `max_dte` 前置过滤 — 仅拉取 DTE ≤ max_dte 的到期日,
+    减少远月无用 API 调用(正常盘后采集限 7 天内可省 ~70% 配额)。
+    max_dte=None 时拉全部到期日(历史回填等需要全链场景)。
 
     yfinance 返回的 options 数据较慢;生产建议用更专业的行情商。
     """
@@ -108,6 +112,16 @@ async def fetch_options_chain(symbol: str) -> list[OptionContract]:
     ticker = yf.Ticker(symbol)
     # yfinance 1.x: Ticker.options 是 property(tuple), 不是 method
     expirations: list[str] = list(await asyncio.to_thread(lambda: ticker.options))
+    today = date.today()
+    # 前置过滤: 仅保留 DTE ≤ max_dte 的到期日 (None → 全部)
+    if max_dte is not None:
+        expirations = [
+            e for e in expirations
+            if (date.fromisoformat(e) - today).days <= max_dte
+        ]
+        if not expirations:
+            log.info("options.no_valid_expiry", symbol=symbol, max_dte=max_dte)
+            return []
     out: list[OptionContract] = []
     for exp in expirations:
         await _limiter.acquire()

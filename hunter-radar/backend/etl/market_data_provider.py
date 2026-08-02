@@ -72,8 +72,10 @@ class MarketDataProvider(ABC):
         """拉取日 K 线数据。"""
 
     @abstractmethod
-    async def fetch_options_chain(self, symbol: str) -> list[OptionContract]:
-        """拉取期权链数据。"""
+    async def fetch_options_chain(
+        self, symbol: str, max_dte: int | None = None
+    ) -> list[OptionContract]:
+        """拉取期权链数据。max_dte: 前置 DTE 过滤 (None=全部)。"""
 
     async def health_check(self) -> bool:
         """健康检查(默认 True)。"""
@@ -126,13 +128,25 @@ class YFinanceProvider(MarketDataProvider):
             )
         return out
 
-    async def fetch_options_chain(self, symbol: str) -> list[OptionContract]:
+    async def fetch_options_chain(
+        self, symbol: str, max_dte: int | None = None
+    ) -> list[OptionContract]:
         import yfinance as yf
 
         await self._limiter.acquire()
         ticker = yf.Ticker(symbol)
         # yfinance Ticker.options 是 property(返回 tuple),不是 method
         expirations: tuple[str, ...] = await asyncio.to_thread(lambda: ticker.options)
+        # 方案 3.2 (AQ-02): 前置 DTE 过滤
+        if max_dte is not None:
+            today = date.today()
+            expirations = tuple(
+                e for e in expirations
+                if (date.fromisoformat(e) - today).days <= max_dte
+            )
+            if not expirations:
+                log.info("options.no_valid_expiry", symbol=symbol, max_dte=max_dte)
+                return []
         out: list[OptionContract] = []
         for exp in expirations:
             await self._limiter.acquire()
@@ -339,11 +353,13 @@ class DataProviderManager:
         log.error("provider.all_failed", symbol=symbol)
         return FetchResult(data=[], source="none", is_fallback=True, error="all providers failed")
 
-    async def fetch_options_chain(self, symbol: str) -> FetchResult:
-        """拉取期权链,自动降级。"""
+    async def fetch_options_chain(
+        self, symbol: str, max_dte: int | None = None
+    ) -> FetchResult:
+        """拉取期权链,自动降级。max_dte: 前置 DTE 过滤 (None=全部)。"""
         # 1) 主源
         try:
-            contracts = await self.primary.fetch_options_chain(symbol)
+            contracts = await self.primary.fetch_options_chain(symbol, max_dte)
             if contracts:
                 return FetchResult(
                     data=contracts, source=self.primary.name, is_fallback=False
@@ -359,7 +375,7 @@ class DataProviderManager:
         # 2) 备份源(Alpha Vantage 不支持期权,跳过)
         for fb in self.fallbacks:
             try:
-                contracts = await fb.fetch_options_chain(symbol)
+                contracts = await fb.fetch_options_chain(symbol, max_dte)
                 if contracts:
                     return FetchResult(
                         data=contracts, source=fb.name, is_fallback=True

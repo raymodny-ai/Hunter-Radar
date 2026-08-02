@@ -474,7 +474,10 @@ async def run_daily_pipeline(
                 if not (seed["is_universe"] and seed["type"] in ("stock", "etf")):
                     continue
                 try:
-                    result = await provider_mgr.fetch_options_chain(seed["ticker"])
+                    # 3.2 (AQ-02): 正常盘后采集限 0-7 DTE, 省 ~70% API 配额
+                    result = await provider_mgr.fetch_options_chain(
+                        seed["ticker"], max_dte=settings.options_cron_dte_max
+                    )
                     rows = result.data
                     if not rows:
                         log.warning(
