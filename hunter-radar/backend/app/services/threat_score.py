@@ -208,23 +208,51 @@ _DEFAULT_WEIGHTS_ETF: dict[str, float] = {
     "options": 0.35, "short": 0.45, "divergence": 0.20
 }
 
-# 当某模块 signal=HIGH 时,该模块权重提升至 0.40,压缩其他 Normal 模块
+# 当某模块 signal=HIGH 时,该模块权重提升,压缩其他 Normal 模块
 _HIGH_BOOST: float = 0.40
 
 
+def _derive_high_from_scores(
+    scores: dict[str, float | None],
+    thresholds: dict[str, float] | None = None,
+) -> set[str]:
+    """2.2 标准化: 模块分 >= 阈值 → HIGH (方案 CA-14)。
+
+    用 config.signal_high_thresholds 逐模块判定; 未配置阈值的模块按 base 权重
+    归一化处理(不参与 HIGH)。
+    """
+    if thresholds is None:
+        from app.core.config import get_settings
+
+        thresholds = get_settings().signal_high_thresholds
+    high: set[str] = set()
+    for mod, score in scores.items():
+        if score is None:
+            continue
+        thr = thresholds.get(mod)
+        if thr is not None and float(score) >= float(thr):
+            high.add(mod)
+    return high
+
+
 def reallocate_weights(
-    signals: dict[str, str],
+    signals: dict[str, str] | None = None,
     *,
+    scores: dict[str, float | None] | None = None,
+    thresholds: dict[str, float] | None = None,
     base_weights: dict[str, float] | None = None,
     symbol_type: str = "stock",
 ) -> dict[str, float]:
     """动态权重重分配:总和恒=1.0。
 
-    当某模块 signal_strength=HIGH 时,其权重提升至 _HIGH_BOOST,
-    剩余权重按 Normal 模块原比例重分配。
+    2.2 标准化 (方案 CA-14): 优先用 `scores`(模块分) + `thresholds` 判定 HIGH
+    (score >= threshold); 否则沿用旧 `signals`={module: "HIGH"|"NORMAL"} 标签。
+    HIGH 模块均分 _HIGH_BOOST 权重, 剩余按 Normal 模块原比例重分配。
 
     Args:
-        signals: {module_name: "HIGH" | "NORMAL"}
+        signals: 旧式标签 {module_name: "HIGH" | "NORMAL"} (兼容旧调用)
+        scores: 模块分数 {module_name: float|None} — 2.2 首选, 由阈值自动判 HIGH
+        thresholds: HIGH 判定阈值; None 时用 config.signal_high_thresholds
         base_weights: 基准权重;None 时用默认(stock/etf)
         symbol_type: "stock" | "etf"
 
@@ -238,9 +266,19 @@ def reallocate_weights(
             else _DEFAULT_WEIGHTS_STOCK.copy()
         )
 
-    high_modules = [m for m, s in signals.items() if s == "HIGH" and m in base_weights]
-    if not high_modules:
-        return base_weights.copy()
+    # 2.2: 若给了 scores, 用阈值自动推导 HIGH (优先)
+    if scores is not None:
+        high_modules = _derive_high_from_scores(scores, thresholds) & set(base_weights)
+        if not high_modules:
+            return base_weights.copy()
+    else:
+        # 旧式: 由信号标签判定
+        high_modules = [
+            m for m, s in (signals or {}).items()
+            if s == "HIGH" and m in base_weights
+        ]
+        if not high_modules:
+            return base_weights.copy()
 
     # HIGH 模块均分 _HIGH_BOOST
     per_high = _HIGH_BOOST / len(high_modules)

@@ -100,6 +100,15 @@ class Settings(BaseSettings):
     }
     threat_red_threshold: int = 70
     threat_red_threshold_panic: int = 80  # VIX>30 或 SPX<MA20 时上调
+
+    # ---- 2.2 HIGH 信号判定标准化 (方案 CA-14) ----
+    # 各模块分达到此阈值视为 HIGH → 动态权重重分配时提升权重。
+    signal_high_thresholds: dict[str, float] = {
+        "options": 75.0,   # 期权异常模块分
+        "short": 70.0,     # 做空压力 Z-Score 对应分
+        "divergence": 80.0,  # 量价背离百分位 × 100
+        "insider": 65.0,   # press*0.6+cover*0.4
+    }
     # OQ-02 EMA 平滑半衰期(交易日)
     ema_halflife_days: int = 2
 

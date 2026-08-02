@@ -478,17 +478,35 @@ async def compute_threat_scores(
                 except Exception as e:  # noqa: BLE001
                     log.warning("ml_weights.fail", sym=sym, error=str(e))
 
-            # V1.5.9 动态权重重分配: Options HIGH → 权重提升至 0.40
-            opt_signal = options_signals.get(sym, "NORMAL")
-            if opt_signal == "HIGH":
-                signals = {"options": "HIGH", "short": "NORMAL", "divergence": "NORMAL"}
-                if not is_etf:
-                    signals["insider"] = "NORMAL"
-                weights = reallocate_weights(
-                    signals,
-                    base_weights=weights,
-                    symbol_type=sym_type,
-                )
+            # V1.5.9/V1.6.2 动态权重重分配 (2.2 标准化 CA-14):
+            # 优先用模块分 scores 按 config.signal_high_thresholds 自动判 HIGH;
+            # 无阈值命中时回落到旧 Options signal_strength 标签。
+            module_scores = {
+                "options": mod_opts,
+                "short": mod_short,
+                "divergence": mod_div,
+            }
+            if not is_etf:
+                module_scores["insider"] = mod_insider
+            realloc_weights = reallocate_weights(
+                scores=module_scores,
+                base_weights=weights,
+                symbol_type=sym_type,
+            )
+            if realloc_weights != weights:
+                weights = realloc_weights
+            else:
+                # 无阈值 HIGH 命中 → 回落旧逻辑 (Options signal_strength=HIGH)
+                opt_signal = options_signals.get(sym, "NORMAL")
+                if opt_signal == "HIGH":
+                    signals = {"options": "HIGH", "short": "NORMAL", "divergence": "NORMAL"}
+                    if not is_etf:
+                        signals["insider"] = "NORMAL"
+                    weights = reallocate_weights(
+                        signals,
+                        base_weights=weights,
+                        symbol_type=sym_type,
+                    )
 
             # 调 services 算 raw + EMA(Min(Score,100) 已在 compute_threat_score 内)
             hist = history.get(sym, [])
