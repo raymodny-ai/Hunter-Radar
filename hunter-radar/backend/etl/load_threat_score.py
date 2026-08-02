@@ -95,7 +95,12 @@ def _insider_module_score(
     buybacks: list[BuybackEvent],
     asof: date,
 ) -> float:
-    """内部人抛压 + 掩护配对 → 0-100(混合分)。"""
+    """内部人抛压 + 掩护配对 → 0-100(混合分)。
+
+    归一化 (方案 2.4 CA-09): press 与 cover 均为 0-100 分档式子评分,
+    量纲一致; 加权合成 press*0.6 + cover*0.4。
+    (ETF 无限内部人模块, 调用方传 0.0; 详见 docs/scoring-methodology.md)
+    """
     press = insider_sell_pressure_score(sells, asof=asof)
     pairs = cover_up_alert(sells, buybacks, asof=asof)
     cover = cover_up_score(pairs)
