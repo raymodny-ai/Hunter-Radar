@@ -11,6 +11,25 @@ export class ApiError extends Error {
 }
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
+  // 4.5: 幂等请求(GET/HEAD)遇 502/503/504 自动重试, 指数退避 1s/2s (各 1 次)
+  const method = (init?.method ?? "GET").toUpperCase();
+  const retriable = method === "GET" || method === "HEAD";
+  const delay = (attempt: number) => new Promise((r) => setTimeout(r, 1000 * (attempt + 1)));
+  let lastErr: unknown = null;
+  for (let attempt = 0; attempt <= (retriable ? 2 : 0); attempt++) {
+    if (attempt > 0) await delay(attempt - 1);
+    try {
+      return await _requestOnce<T>(path, init);
+    } catch (e) {
+      lastErr = e;
+      const retryable = e instanceof ApiError && [502, 503, 504].includes(e.status);
+      if (!(retriable && retryable && attempt < 2)) throw e;
+    }
+  }
+  throw lastErr;
+}
+
+async function _requestOnce<T>(path: string, init?: RequestInit): Promise<T> {
   const r = await fetch(`${BASE}${path}`, {
     headers: {
       "Content-Type": "application/json",

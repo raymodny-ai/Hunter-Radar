@@ -696,6 +696,19 @@ async def run_daily_pipeline(
         # 物化视图不存在时忽略(首次部署未执行 migration)
         log.warning("refresh_mv_screener.skip", error=str(e))
 
+    # ---- 10) 4.5: 数据落库后失效前端 Redis 缓存 ----
+    try:
+        from app.core.redis_client import invalidate_caches
+
+        patterns = ["cache:get_threat_score:*", "cache:get_screener:*", "cache:get_threat_history:*"]
+        deleted = await invalidate_caches(patterns)
+        report.stage("invalidate_caches", deleted=len(deleted))
+        if deleted:
+            log.info("cache.invalidated", patterns=patterns, deleted=len(deleted))
+    except Exception as e:  # noqa: BLE001
+        # 缓存失效失败不阻塞 ETL(下次请求自愈)
+        log.warning("cache.invalidate.skip", error=str(e))
+
     return report
 
 

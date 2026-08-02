@@ -114,6 +114,30 @@ class RedisClient:
 redis_client = RedisClient(_client)
 
 
+async def invalidate_caches(patterns: list[str]) -> list[str]:
+    """4.5 (优化方案 4.4): 按 SCAN 模式批量失效缓存 key。
+
+    ETL 完成后由 pipeline 调用, 确保前端看到的是新数据而非旧缓存。
+    用 SCAN(而非 KEYS)避免阻塞 Redis; Redis 挂时静默降级(返回 []),
+    不阻塞 ETL 主流程。
+
+    Args:
+        patterns: 如 ["cache:get_threat_score:*", "cache:get_screener:*"]
+
+    Returns:
+        实际删除的 key 列表(失败时为空)。
+    """
+    deleted: list[str] = []
+    try:
+        for pat in patterns:
+            async for key in _client.scan_iter(pat, count=500):
+                await _client.delete(key)
+                deleted.append(key)
+    except Exception:  # noqa: BLE001
+        # Redis 不可达 → 静默降级, 不阻塞 ETL
+        return deleted if deleted else []
+    return deleted
+
 def cached_json(ttl: int) -> Callable[[Callable[..., Awaitable[Any]]], Callable[..., Awaitable[Any]]]:
     """装饰器：对异步函数的返回值做 JSON 缓存。
 
