@@ -64,12 +64,17 @@ class ExplainThreatScoreDTO(ThreatScoreDTO):
 def _explain_for_score(
     dto: ThreatScoreDTO,
     settings_obj,
+    persisted: dict | None = None,
 ) -> ExplainThreatScoreDTO:
-    """从 ThreatScoreDTO + config 推导解释字段 (2.6 方案)。
+    """从 ThreatScoreDTO + (可选)持久化分解列 推导解释字段 (2.6 / 4.1)。
 
     模块分/权重来自 DTO; 置信度按有效模块数推导 (CA-11 逻辑):
     - 有效模块(分>0) < MIN_ACTIVE_MODULES(=2) → insufficient_data
     - 否则: 4 模块有效=high / <4=medium
+
+    persisted: _read_persisted_explain 返回的评分分解列(module_scores_json /
+    module_quality / confidence / active_modules); 4.1 后 load 已落库,
+    优先采用持久化值, 避免现算与当时打分不一致。
     """
     from app.services.threat_score import MIN_ACTIVE_MODULES
 
@@ -86,11 +91,21 @@ def _explain_for_score(
     contrib = {k: (scores[k] * weights.get(k, 0.0)) for k in active}
     primary = max(contrib, key=contrib.get) if contrib else None
 
-    # 置信度 (CA-11)
-    if len(active) < MIN_ACTIVE_MODULES:
-        confidence: str = "insufficient_data"
+    # 置信度：优先持久化列（4.1），无则现算（CA-11）
+    if persisted and persisted.get("confidence"):
+        confidence: str = persisted["confidence"]
+        active_count = persisted.get("active_modules")
     else:
-        confidence = "high" if len(active) == len(scores) else "medium"
+        if len(active) < MIN_ACTIVE_MODULES:
+            confidence = "insufficient_data"
+        else:
+            confidence = "high" if len(active) == len(scores) else "medium"
+        active_count = len(active)
+
+    # module_scores：优先持久化列，无则用 DTO 现算
+    pers_scores = (persisted or {}).get("module_scores")
+    if pers_scores:
+        scores = {k: float(v) for k, v in pers_scores.items()}
 
     # EMA / 尖峰 / regime 说明
     panic_thr = float(settings_obj.threat_red_threshold_panic)
@@ -108,8 +123,8 @@ def _explain_for_score(
         **dto.model_dump(),
         primary_driver=primary,
         module_scores=scores,
-        confidence=confidence,
-        active_modules=len(active),
+        confidence=confidence,  # type: ignore[arg-type]
+        active_modules=active_count or 0,
         ema_note=ema_note,
         spike_override=spike_override,
         regime_note=regime_note,
@@ -356,7 +371,8 @@ async def _compute_threat_score(ticker: str, session: AsyncSession) -> ThreatSco
             """SELECT symbol, symbol_type, module_options, module_short,
                       module_divergence, module_insider, weights,
                       total, total_raw, ema_halflife, signal_lifecycle,
-                      nl_summary, regime, data_quality
+                      nl_summary, regime, data_quality,
+                      module_scores_json, module_quality, confidence, active_modules
                FROM threat_score_daily
                WHERE symbol = :sym AND trade_date = :td
                LIMIT 1"""
@@ -381,7 +397,8 @@ async def _compute_threat_score(ticker: str, session: AsyncSession) -> ThreatSco
     # SQL: symbol(0), symbol_type(1), module_options(2), module_short(3),
     #      module_divergence(4), module_insider(5), weights(6), total(7),
     #      total_raw(8), ema_halflife(9), signal_lifecycle(10), nl_summary(11), regime(12),
-    #      data_quality(13)
+    #      data_quality(13), module_scores_json(14), module_quality(15),
+    #      confidence(16), active_modules(17)
 
     # V1.6.1: 优先读持久化的 data_quality（load 时由 services.threat_score 计算）；
     # 历史行无此列时为 NULL → fallback 到按模块值推导，避免 DTO 字段形同虚设（IMPL-DQ-002 断裂点 3）。
@@ -407,6 +424,37 @@ async def _compute_threat_score(ticker: str, session: AsyncSession) -> ThreatSco
         data_warmup=warmup,
         data_quality=persisted_q if persisted_q else computed_q,
     )
+
+
+async def _read_persisted_explain(ticker: str, session: AsyncSession) -> dict | None:
+    """4.1 (IMPL 4.1): 读最新一日的评分分解持久化列。
+
+    返回 {"module_scores", "module_quality", "confidence", "active_modules"}。
+    历史行(NULL)或该 ticker 无数据时返回 None → explain 回落到现算。
+    """
+    from sqlalchemy import text as _text
+
+    rs = await session.execute(
+        _text(
+            """SELECT module_scores_json, module_quality, confidence, active_modules
+               FROM threat_score_daily
+               WHERE symbol = :sym
+               ORDER BY trade_date DESC LIMIT 1"""
+        ),
+        {"sym": ticker.upper()},
+    )
+    row = rs.first()
+    if row is None:
+        return None
+    mscores, mqual, conf, act = row[0], row[1], row[2], row[3]
+    if mscores is None and conf is None and act is None:
+        return None
+    return {
+        "module_scores": dict(mscores) if mscores else None,
+        "module_quality": dict(mqual) if mqual else None,
+        "confidence": conf,
+        "active_modules": int(act) if act is not None else None,
+    }
 
 
 @router.get(
@@ -438,8 +486,9 @@ async def get_threat_score(
         return None
     if not explain:
         return result
-    # explain: 附加解释字段 (基于当前 config 现算, 不缓存避免陈旧)
-    return _explain_for_score(result, settings)  # type: ignore[arg-type]
+    # explain: 优先读持久化的评分分解列(IMPL 4.1);历史行无列(NULL)时回落到现算
+    persisted = await _read_persisted_explain(ticker, session)
+    return _explain_for_score(result, settings, persisted)
 
 
 @router.get(

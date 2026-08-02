@@ -17,6 +17,7 @@ from sqlalchemy import (
     ForeignKey,
     Index,
     Integer,
+    SmallInteger,
     Numeric,
     String,
     Table,
@@ -96,6 +97,11 @@ class ThreatScoreDaily(Base):
     data_quality: Mapped[str | None] = mapped_column(
         Text, nullable=True, default=None, server_default=None
     )
+    # V1.6.2: 评分分解可审计闭环 (IMPL 4.1 / DB-02 / DB-03)
+    module_scores_json: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    module_quality: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    confidence: Mapped[str | None] = mapped_column(Text, nullable=True, default="high")
+    active_modules: Mapped[int | None] = mapped_column(SmallInteger, nullable=True, default=4)
     computed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 

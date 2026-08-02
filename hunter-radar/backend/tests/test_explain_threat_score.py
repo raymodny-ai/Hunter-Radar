@@ -94,3 +94,44 @@ def test_ema_note_format():
 def test_dto_type():
     exp = _explain_for_score(_dto(), _Settings())
     assert isinstance(exp, ExplainThreatScoreDTO)
+
+
+# ---- 4.1 (IMPL 4.1): 持久化评分分解列优先 ----------------
+
+
+def test_persisted_confidence_overrides_derived():
+    # persisted confidence=medium 覆盖现算的 high(4 模块)
+    exp = _explain_for_score(
+        _dto(), _Settings(),
+        persisted={"confidence": "medium", "active_modules": 3, "module_scores": None},
+    )
+    assert exp.confidence == "medium"
+    assert exp.active_modules == 3
+
+
+def test_persisted_module_scores_override():
+    pers = {
+        "module_scores": {"options": 10, "short": 20, "divergence": 30, "insider": 40},
+        "confidence": None,
+        "active_modules": None,
+    }
+    exp = _explain_for_score(_dto(), _Settings(), persisted=pers)
+    # 持久化 scores 覆盖 DTO 模块分
+    assert exp.module_scores == {"options": 10.0, "short": 20.0, "divergence": 30.0, "insider": 40.0}
+    # confidence None → 回落到现算 (4 模块 active → high)
+    assert exp.confidence == "high"
+
+
+def test_persisted_none_falls_back_to_derive():
+    # persisted 全空/None → 与原 2.6 逻辑一致 (现算)
+    exp = _explain_for_score(_dto(), _Settings(), persisted=None)
+    assert exp.confidence == "high"
+    assert exp.active_modules == 4
+    assert exp.module_scores == {"options": 50.0, "short": 70.0, "divergence": 40.0, "insider": 30.0}
+
+
+def test_persisted_insufficient_data():
+    pers = {"confidence": "insufficient_data", "active_modules": 1, "module_scores": None}
+    exp = _explain_for_score(_dto(), _Settings(), persisted=pers)
+    assert exp.confidence == "insufficient_data"
+    assert exp.active_modules == 1

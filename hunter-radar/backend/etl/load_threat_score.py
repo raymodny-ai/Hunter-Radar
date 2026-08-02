@@ -558,6 +558,19 @@ async def compute_threat_scores(
             # 暖启动(BD-090)
             warmup = _is_data_warmup(short_z.get(sym), hist)
 
+            # V1.6.2 (IMPL 4.1): 评分分解落库 — module_scores_json / module_quality /
+            # confidence / active_modules, 供 explain API 读持久化列(2.6 前是响应时现算)
+            active_mods: set[str] = set(score.get("modules_active") or [])
+            dq = score.get("data_quality", "complete")
+            module_quality: dict[str, str] = {
+                m: (dq if m in active_mods else "missing")
+                for m in (
+                    ["options", "short", "divergence", "insider"]
+                    if not is_etf
+                    else ["options", "short", "divergence"]
+                )
+            }
+
             payload.append(
                 {
                     "trade_date": trade_date,
@@ -574,7 +587,11 @@ async def compute_threat_scores(
                     "signal_lifecycle": lifecycle,
                     "nl_summary": None,  # BD-065 由 nl_summary service 后续填充
                     "regime": "normal",  # M3 接 BD-063 后改为 dynamic
-                    "data_quality": score.get("data_quality", "complete"),
+                    "data_quality": dq,
+                    "module_scores_json": module_scores,
+                    "module_quality": module_quality,
+                    "confidence": score.get("confidence", "high"),
+                    "active_modules": score.get("active_modules", len(active_mods)),
                 }
             )
 
@@ -616,6 +633,10 @@ async def compute_threat_scores(
                 "ema_halflife": stmt.excluded.ema_halflife,
                 "signal_lifecycle": stmt.excluded.signal_lifecycle,
                 "data_quality": stmt.excluded.data_quality,
+                "module_scores_json": stmt.excluded.module_scores_json,
+                "module_quality": stmt.excluded.module_quality,
+                "confidence": stmt.excluded.confidence,
+                "active_modules": stmt.excluded.active_modules,
             },
         )
         rs = await session.execute(stmt)
