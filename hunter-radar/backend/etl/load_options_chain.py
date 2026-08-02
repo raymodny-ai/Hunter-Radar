@@ -184,7 +184,7 @@ async def load_options_chain(
                     "open_interest": stmt.excluded.open_interest,
                     "implied_vol": stmt.excluded.implied_vol,
                     "in_the_money": stmt.excluded.in_the_money,
-                    "updated_at": func.now(),
+                    "fetched_at": func.now(),
                 },
             )
             result.inserted = inserted

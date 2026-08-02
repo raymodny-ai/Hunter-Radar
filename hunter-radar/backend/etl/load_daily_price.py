@@ -78,7 +78,7 @@ async def load_daily_price(
                     "close": stmt.excluded.close,
                     "adj_close": stmt.excluded.adj_close,
                     "volume": stmt.excluded.volume,
-                    "updated_at": func.now(),
+                    "fetched_at": func.now(),
                 },
             )
             rs = await session.execute(stmt)

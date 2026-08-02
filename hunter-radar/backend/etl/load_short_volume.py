@@ -93,7 +93,7 @@ async def _bulk_insert(session: AsyncSession, payload: list[dict]) -> int:
         set_={
             "short_volume": stmt.excluded.short_volume,
             "non_short_volume": stmt.excluded.non_short_volume,
-            "updated_at": func.now(),
+            "fetched_at": func.now(),
         },
     )
     rs = await session.execute(stmt)
