@@ -44,6 +44,79 @@ class ThreatScoreDTO(BaseModel):
     data_quality: Literal["complete", "degraded", "stale"] = "complete"  # V1.6.1
 
 
+class ExplainThreatScoreDTO(ThreatScoreDTO):
+    """2.6 (CA-??): 评分解释性扩展 — `?explain=true` 返回。
+
+    在 ThreatScoreDTO 基础上附加: 主驱动模块、实际权重、各模块分、置信度、
+    EMA 说明、尖峰覆盖、regime 说明。全部由现有列+config 推导, 不需 schema 迁移。
+    """
+
+    primary_driver: str | None  # 权重×分 贡献最大的模块
+    module_scores: dict[str, float]
+    confidence: Literal["high", "medium", "insufficient_data"]
+    active_modules: int
+    ema_note: str
+    spike_override: bool
+    regime_note: str | None
+
+
+
+def _explain_for_score(
+    dto: ThreatScoreDTO,
+    settings_obj,
+) -> ExplainThreatScoreDTO:
+    """从 ThreatScoreDTO + config 推导解释字段 (2.6 方案)。
+
+    模块分/权重来自 DTO; 置信度按有效模块数推导 (CA-11 逻辑):
+    - 有效模块(分>0) < MIN_ACTIVE_MODULES(=2) → insufficient_data
+    - 否则: 4 模块有效=high / <4=medium
+    """
+    from app.services.threat_score import MIN_ACTIVE_MODULES
+
+    scores = {
+        "options": dto.module_options,
+        "short": dto.module_short,
+        "divergence": dto.module_divergence,
+        "insider": dto.module_insider,
+    }
+    weights = dto.weights or {}
+    active = {k: v for k, v in scores.items() if v is not None and k in weights}
+
+    # 主驱动 = 权重×分 最大者
+    contrib = {k: (scores[k] * weights.get(k, 0.0)) for k in active}
+    primary = max(contrib, key=contrib.get) if contrib else None
+
+    # 置信度 (CA-11)
+    if len(active) < MIN_ACTIVE_MODULES:
+        confidence: str = "insufficient_data"
+    else:
+        confidence = "high" if len(active) == len(scores) else "medium"
+
+    # EMA / 尖峰 / regime 说明
+    panic_thr = float(settings_obj.threat_red_threshold_panic)
+    spike_override = dto.total_raw >= panic_thr
+    ema_note = (
+        f"原始分 {dto.total_raw:.0f}, EMA 平滑后 {dto.total:.0f} "
+        f"(半衰期 {dto.ema_halflife} 天)"
+    )
+    regime_note = (
+        "恐慌模式: 红色阈值从 70 上调至 80"
+        if dto.regime == "panic" else None
+    )
+
+    extra = ExplainThreatScoreDTO(
+        **dto.model_dump(),
+        primary_driver=primary,
+        module_scores=scores,
+        confidence=confidence,
+        active_modules=len(active),
+        ema_note=ema_note,
+        spike_override=spike_override,
+        regime_note=regime_note,
+    )
+    return extra
+
+
 class OptionsAnomalyDTO(BaseModel):
     trade_date: date
     contract: str
@@ -346,21 +419,27 @@ async def _compute_threat_score(ticker: str, session: AsyncSession) -> ThreatSco
 )
 async def get_threat_score(
     ticker: str,
+    explain: bool = Query(False, description="返回评分解释(主驱动/权重/置信度)"),
     session: AsyncSession = Depends(get_session),
-) -> ThreatScoreDTO | None:
+) -> ThreatScoreDTO | ExplainThreatScoreDTO | None:
     """返回最新一日的 Threat Score（从 threat_score_daily 表读）。
 
     M4 接力期：12h Redis TTL 缓存（key 含 ticker）。
     V1.4.2 patch (FE-160 rev5): 无 score 返 200 + null 而非 404。
+    2.6 (方案): `?explain=true` → 附加主驱动/权重/置信度/EMA 说明。
     """
-    cache_key = f"cache:get_threat_score:{ticker.upper()}"
+    cache_key = f"cache:get_threat_score:{ticker.upper()}:" + ("explain" if explain else "plain")
     result, _hit = await cache_or_set_json(
         cache_key,
         settings.cache_ttl_report_seconds,
         lambda: _compute_threat_score(ticker, session),
     )
-    # V1.4.2: None 透传 (来自 _compute_threat_score 无数据情况)
-    return result
+    if result is None:
+        return None
+    if not explain:
+        return result
+    # explain: 附加解释字段 (基于当前 config 现算, 不缓存避免陈旧)
+    return _explain_for_score(result, settings)  # type: ignore[arg-type]
 
 
 @router.get(
