@@ -617,7 +617,7 @@ export type BasketMemberDTO = {
 
 /** §6.2 FE-061 全局数据状态 DTO。 */
 export type DataStatusDTO = {
-  status: "ready" | "warming" | "stale" | "error";
+  status: "ready" | "warming" | "stale" | "error" | "degraded" | "partial";
   reason: string;
   data_warmup: boolean;
   last_data_date: string | null;

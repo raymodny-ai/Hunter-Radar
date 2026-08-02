@@ -3,7 +3,7 @@ import { useState } from "react";
 import { useDataStatus } from "@/features/useDataStatus";
 import type { DataStatusDTO } from "@/lib/api";
 
-export type DataStatus = "ready" | "warming" | "stale" | "error";
+export type DataStatus = "ready" | "warming" | "stale" | "error" | "degraded" | "partial";
 
 export interface DataStatusBannerProps {
   /** 可选:外部传入已推算好的 status(便于 e2e / 单元测试) */
@@ -13,11 +13,13 @@ export interface DataStatusBannerProps {
 
 /** §6.2 FE-061 全局数据状态 banner。
  *
- * 4 个状态:
- * - ready   → 不渲染(数据已就位)
- * - warming → 冷启动 / 无 PG,黄色 banner,显式说明
- * - stale   → 数据过期,橙色 banner,显式 last_data_date
- * - error   → 后端不可达 / 5xx,红色 banner,可关闭 + 重试按钮
+ * 6 个状态:
+ * - ready    → 不渲染(数据已就位)
+ * - warming  → 冷启动 / 无 PG,黄色 banner,显式说明
+ * - stale    → 数据过期,橙色 banner,显式 last_data_date
+ * - degraded → 部分数据源降级,评分可能偏低(4.2 断裂点 5)
+ * - partial  → 数据不完整,评分仅供参考(4.2 断裂点 5)
+ * - error    → 后端不可达 / 5xx,红色 banner,可关闭 + 重试按钮
  *
  * 硬规则:
  * - 严禁在数据缺失时捏造数字 / 隐藏 banner
@@ -115,6 +117,26 @@ function paletteFor(status: DataStatus) {
         icon: "⚠️",
         title: "text-orange-200",
         titleText: "数据已过期 · Data Stale",
+        reason: "text-orange-300/80",
+      };
+    case "degraded":
+      // 4.2: 部分数据源降级,评分可能偏低
+      return {
+        border: "border-amber-700/50",
+        bg: "bg-amber-950/30",
+        icon: "⚠️",
+        title: "text-amber-200",
+        titleText: "部分数据源降级 · Data Degraded",
+        reason: "text-amber-300/80",
+      };
+    case "partial":
+      // 4.2: 数据不完整,评分仅供参考
+      return {
+        border: "border-orange-700/50",
+        bg: "bg-orange-950/30",
+        icon: "⚠️",
+        title: "text-orange-200",
+        titleText: "数据不完整 · Data Partial",
         reason: "text-orange-300/80",
       };
     case "error":

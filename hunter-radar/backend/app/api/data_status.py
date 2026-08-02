@@ -57,6 +57,58 @@ async def _last_data_date() -> date | None:
         return None
 
 
+async def _module_quality_status(trade_date: date) -> tuple[str | None, str]:
+    """4.2 (断裂点 5): 读最新日 threat_score_daily.module_quality,推导评分完整性。
+
+    返回 (status, reason):
+      - ("partial", ...) : 存在模块 quality=missing(数据不完整,评分仅供参考)
+      - ("degraded", ...): 存在模块 quality=degraded(部分数据源降级,评分可能偏低)
+      - (None, "ok")     : 全 complete(或列未落库,回退 ready)
+
+    module_quality 形如 {options: complete|degraded|missing, short: ...}。
+    历史行/旧部署无此列时返回 (None, "ok") 不误报。
+    """
+    try:
+        async with engine.begin() as conn:
+            rs = await conn.execute(
+                text(
+                    """SELECT module_quality FROM threat_score_daily
+                       WHERE trade_date = :d AND module_quality IS NOT NULL
+                       LIMIT 200"""
+                ),
+                {"d": trade_date},
+            )
+            rows = rs.all()
+    except Exception:  # noqa: BLE001
+        return None, "ok"
+
+    if not rows:
+        return None, "ok"
+
+    missing_syms: list[str] = []
+    degraded_syms: list[str] = []
+    for (mq,) in rows:
+        if not mq:
+            continue
+        quals = set(mq.values())
+        if "missing" in quals:
+            missing_syms.append("x")
+        elif "degraded" in quals:
+            degraded_syms.append("x")
+
+    if missing_syms:
+        return (
+            "partial",
+            f"{len(missing_syms)} 个标的模块数据不完整(missing),评分仅供参考",
+        )
+    if degraded_syms:
+        return (
+            "degraded",
+            f"{len(degraded_syms)} 个标的部分数据源降级,评分可能偏低",
+        )
+    return None, "ok"
+
+
 @router.get("/data-status", summary="全局数据状态(FE-061)")
 async def get_data_status() -> dict[str, Any]:
     """全局数据状态聚合:db / redis / data_warmup / is_stale。"""
@@ -111,9 +163,12 @@ async def get_data_status() -> dict[str, Any]:
             "db_ok": True,
             "redis_ok": redis_ok,
         }
+
+    # 4.2 (断裂点 5): 非 stale/非 warmup 时,检查最新日模块质量 → degraded/partial
+    health_status, health_reason = await _module_quality_status(last)
     return {
-        "status": "ready",
-        "reason": "ok",
+        "status": health_status or "ready",
+        "reason": health_reason if health_status else "ok",
         "data_warmup": False,
         "last_data_date": last.isoformat() if last else None,
         "is_stale": False,
