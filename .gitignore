@@ -46,10 +46,10 @@ backend/scripts/m8t1_v*_run.log
 .redis-data/
 init_pg.sh
 
-# 锁文件（平台无关，项目用 uv/pnpm 管理）
+# 锁文件（平台无关，uv.lock 需提交以实现后端可复现构建；package/pnpm 锁忽略）
 package-lock.json
 pnpm-lock.yaml
-uv.lock
+# uv.lock 提交 (5.2 可复现性)
 
 # 编译产物
 *.tsbuildinfo

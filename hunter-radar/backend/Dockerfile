@@ -1,49 +1,67 @@
 # Hunter Radar V1.6.0 — Multi-stage Dockerfile
-# Build: docker build -t hunter-radar-backend .
+# Build: docker buildx build --tag hunter-radar-backend --load .
 # Run:   docker run -p 8000:8000 hunter-radar-backend
 #
 # 2026-07-22 patch: pin to python:3.12-slim (3.14 pre-GA + pyproject>=3.12 conflict;
 # numpy/pandas prebuilt wheels don't ship 3.14 yet -> blow up at pip install).
+#
+# 2026-08-02 patch (A1 / buildkit cache mount): 拆 apt-get / pip install 到独立 stage,
+# 并用 --mount=type=cache 复用 apt 和 pip 缓存. 第一次 build 跟之前一样久,
+# 第二次起代码变更时 apt cache 命中(秒过), pip cache 部分命中(只重装变化依赖).
+# BuildKit 必须启用 (DOCKER_BUILDKIT=1 或 buildx driver=docker, 默认即开).
+# 触发方式: docker compose build backend (compose v2 + buildkit 走 buildx 路径)
+# 或: docker buildx build --load -t infra-backend -f backend/Dockerfile backend/
 
-# ---- Stage 1: Base ----
-FROM python:3.12-slim AS base
+# ---- Stage 1: System deps (cached) ----
+FROM python:3.12-slim@sha256:57cd7c3a7a273101a6485ba99423ee568157882804b1124b4dd04266317710de AS sysdeps
 
-ENV PYTHONDONTWRITEBYTECODE=1 \
-    PYTHONUNBUFFERED=1 \
-    PIP_NO_CACHE_DIR=1 \
-    PIP_DISABLE_PIP_VERSION_CHECK=1
+ENV DEBIAN_FRONTEND=noninteractive
+
+# apt cache mount 复用: 第二次起秒过
+RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
+    --mount=type=cache,target=/var/lib/apt,sharing=locked \
+    rm -f /etc/apt/apt.conf.d/docker-clean && \
+    apt-get update && \
+    apt-get install -y --no-install-recommends \
+        curl \
+        gcc \
+        libpq-dev && \
+    rm -rf /var/lib/apt/lists/*
+
+# ---- Stage 2: Python deps (pip cached) ----
+FROM sysdeps AS pydeps
 
 WORKDIR /app
 
-# System deps
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    curl \
-    gcc \
-    libpq-dev \
-    && rm -rf /var/lib/apt/lists/*
-
-# ---- Stage 2: Builder ----
-FROM base AS builder
+# pip cache mount: 复用 wheel 缓存, 增量构建只装变化的包
+# PIP_NO_CACHE_DIR=1 关闭 pip 自身 cache dir, 避免破坏 --mount cache
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PIP_DISABLE_PIP_VERSION_CHECK=1 \
+    PIP_NO_CACHE_DIR=1
 
 COPY pyproject.toml ./
-RUN pip install --prefix=/install .
 
-# ---- Stage 3: Runtime ----
-FROM python:3.12-slim AS runtime
+# BuildKit cache mount: 复用 pip wheel 缓存. --prefix=/install 让 builder→runtime COPY 路径不变
+RUN --mount=type=cache,target=/root/.cache/pip,sharing=locked \
+    pip install --prefix=/install .
+
+# ---- Stage 3: Runtime (final image) ----
+FROM python:3.12-slim@sha256:57cd7c3a7a273101a6485ba99423ee568157882804b1124b4dd04266317710de AS runtime
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1
 
 WORKDIR /app
 
-# Runtime deps
+# Runtime only needs curl + libpq5 (runtime libs, no gcc/build tools)
 RUN apt-get update && apt-get install -y --no-install-recommends \
     curl \
     libpq5 \
     && rm -rf /var/lib/apt/lists/*
 
-# Copy installed packages from builder
-COPY --from=builder /install /usr/local
+# Copy installed packages from pydeps stage
+COPY --from=pydeps /install /usr/local
 
 # Copy application code
 COPY app/ ./app/
